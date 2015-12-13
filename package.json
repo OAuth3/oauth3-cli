@@ -1,0 +1,35 @@
+{
+  "name": "oauth3-cli",
+  "version": "1.0.0-alpha",
+  "description": "Boldly taking OAuth2 where it has never gone before!",
+  "main": "index.js",
+  "directories": {
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OAuth3/oauth3-cli.git"
+  },
+  "keywords": [
+    "oauth",
+    "oauth2",
+    "oauth3",
+    "oauth4",
+    "oidc",
+    "openid",
+    "connect"
+  ],
+  "author": "AJ ONeal <coolaj86@gmail.com> (https://coolaj86.com/)",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/OAuth3/oauth3-cli/issues"
+  },
+  "homepage": "https://github.com/OAuth3/oauth3-cli#readme",
+  "dependencies": {
+    "bluebird": "^3.0.6",
+    "homedir": "^0.6.0"
+  }
+}

@@ -14,15 +14,8 @@ var BKSP = String.fromCharCode(127);
 // Probably should use readline
 // https://nodejs.org/api/readline.html
 function getPassword(prompt, callback) {
-    if (callback === undefined) {
-        callback = prompt;
-        prompt = undefined;
-    }
-    if (prompt === undefined) {
-        prompt = 'Password: ';
-    }
     if (prompt) {
-        process.stdout.write(prompt);
+      process.stdout.write(prompt);
     }
 
     var stdin = process.stdin;
@@ -68,4 +61,4 @@ function getPassword(prompt, callback) {
     });
 }
 
-getPassword();
+getPassword('Password: ');
