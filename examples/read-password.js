@@ -19,10 +19,9 @@ function getPassword(prompt, callback) {
     }
 
     var stdin = process.stdin;
-    stdin.resume();
     stdin.setRawMode(true);
-    stdin.resume();
     stdin.setEncoding('utf8');
+    stdin.resume();
 
     var password = '';
     stdin.on('data', function (ch) {
