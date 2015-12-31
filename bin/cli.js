@@ -3,8 +3,21 @@
 var escapeRe = require('escape-string-regexp');
 var colors = require('colors/safe');
 var A = require('../');
+var A3 = require('../lib/utils');
 
-var code = [['u'], ['u'], ['d'], ['d'], ['l'], ['r'], ['l'], ['r'], ['b'], ['a'], [' ']];
+var code = [
+  ['u', 'w', 'i', String.fromCharCode(38)]
+, ['u', 'w', 'i', String.fromCharCode(38)]
+, ['d', 's', 'k', String.fromCharCode(40)]
+, ['d', 's', 'k', String.fromCharCode(40)]
+, ['l', 'a', 'j', String.fromCharCode(37)]
+, ['r', 'd', 'l', String.fromCharCode(39)]
+, ['l', 'a', 'j', String.fromCharCode(37)]
+, ['r', 'd', 'l', String.fromCharCode(39)]
+, ['b']
+, ['a']
+, [' ', String.fromCharCode(13)]
+];
 var state = {
   state: 'loading'
 , msgs: ['...']
@@ -146,7 +159,7 @@ function reCompute(ws, state) {
 }
 
 function checkCodes(ws, state) {
-  var nextChars = code[state.codes.length];
+  var nextChars = code[state.codes.length] || [];
 
   if (-1 === nextChars.indexOf(state.ch)) {
     state.codes = '';
@@ -195,13 +208,15 @@ function search(ws, state) {
   hint(ws, state);
 }
 
-function handleInput(ws, state) {
+function handleInput(ws, state, callback) {
   var stdin = process.stdin;
   stdin.setRawMode(true);
   stdin.setEncoding('utf8');
   stdin.resume();
 
-  var password = '';
+  if (!state.input) {
+    state.input = '';
+  }
   stdin.on('data', function (ch) {
       var BKSP = String.fromCharCode(127);
       var TAB = '\x09';
@@ -214,10 +229,13 @@ function handleInput(ws, state) {
       case "\r":
       case "\u0004":
           // They've finished typing their password
+          if (state.hint) {
+            state.input += state.hint.slice(state.input.length);
+          }
           ws.write('\n');
           stdin.setRawMode(false);
           stdin.pause();
-          callback(false, password);
+          callback(false, state.input);
           break;
       case "\u0003":
           // Ctrl-C
@@ -225,13 +243,17 @@ function handleInput(ws, state) {
           break;
       case BKSP:
           // Backspace
-          password = password.slice(0, password.length - 1);
+          state.input = state.input.slice(0, state.input.length - 1);
           ws.clearLine();
           ws.cursorTo(0);
           ws.write(state.prompt);
-          ws.write(password.split('').map(function () {
-            return '*';
-          }).join(''));
+          if (state.isPassword) {
+            ws.write(state.input.split('').map(function () {
+              return '*';
+            }).join(''));
+          } else {
+            ws.write(state.input);
+          }
           break;
       case TAB:
           if (state.hint) {
@@ -241,11 +263,46 @@ function handleInput(ws, state) {
       default:
           // More passsword characters
           //process.stdout.write('*');
-          password += ch;
-          state.input = password;
+          state.input += ch;
           search(ws, state);
           break;
       }
+  });
+}
+
+function getProviderName(ws, state) {
+  state.state = 'welcome';
+  state.msgs = [
+    "Welcome!"
+  , "It looks like you don't have any stored credentials or profiles."
+  , ""
+  , "Where would you like to create an account?"
+  , ""
+  ];
+  A.providers.sort().forEach(function (provider) {
+    state.msgs.push("• " + provider);
+  });
+  state.msgs.push('');
+  state.msgs.push('Type the name of one of the account providers above (or any of your choosing)');
+  state.error = null;
+  reCompute(ws, state);
+  state.prompt = '> ';
+
+  // TODO allow commandline argument for provider
+  handleInput(ws, state, function (err, input) {
+    if (!input) {
+      state.error = "";
+      getProviderName(ws, state);
+    }
+
+    getProviderDirectives(input);
+  });
+}
+
+function getProviderDirectives(providerUrl) {
+  return A3.getOauth3Json(providerUrl).then(function (results) {
+    console.log(results);
+    process.exit(0);
   });
 }
 
@@ -276,16 +333,7 @@ function main() {
     }
 
     if (!results.configs.length) {
-      state.state = 'welcome';
-      state.msgs = [
-        "Welcome!"
-      , "It looks like you don't have any stored credentials or profiles."
-      , ""
-      , "Type oauth3.org to get started"
-      ];
-      reCompute(ws, state);
-      state.prompt = '> ';
-      handleInput(ws, state);
+      getProviderName(ws, state);
       return;
     }
   });
