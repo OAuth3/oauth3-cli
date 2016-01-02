@@ -5,18 +5,26 @@ var colors = require('colors/safe');
 var A = require('../');
 var A3 = require('../lib/utils');
 
+var BKSP = String.fromCharCode(127);
+var TAB = '\x09';
+var ARROW_UP = '\u001b[A';
+var ARROW_DOWN = '\u001b[B';
+var ARROW_RIGHT = '\u001b[C';
+var ARROW_LEFT = '\u001b[D';
+
+// https://www.novell.com/documentation/extend5/Docs/help/Composer/books/TelnetAppendixB.html
 var code = [
-  ['u', 'w', 'i', String.fromCharCode(38)]
-, ['u', 'w', 'i', String.fromCharCode(38)]
-, ['d', 's', 'k', String.fromCharCode(40)]
-, ['d', 's', 'k', String.fromCharCode(40)]
-, ['l', 'a', 'j', String.fromCharCode(37)]
-, ['r', 'd', 'l', String.fromCharCode(39)]
-, ['l', 'a', 'j', String.fromCharCode(37)]
-, ['r', 'd', 'l', String.fromCharCode(39)]
+  ['u', 'w', 'i', '\u001b[A' /*String.fromCharCode(38)*/]
+, ['u', 'w', 'i', '\u001b[A' /*String.fromCharCode(38)*/]
+, ['d', 's', 'k', '\u001b[B' /*String.fromCharCode(40)*/]
+, ['d', 's', 'k', '\u001b[B' /*String.fromCharCode(40)*/]
+, ['l', 'a', 'j', '\u001b[D' /*String.fromCharCode(37)*/]
+, ['r', 'd', 'l', '\u001b[C' /*String.fromCharCode(39)*/]
+, ['l', 'a', 'j', '\u001b[D' /*String.fromCharCode(37)*/]
+, ['r', 'd', 'l', '\u001b[C' /*String.fromCharCode(39)*/]
 , ['b']
 , ['a']
-, [' ', String.fromCharCode(13)]
+, [' ', '\u001B[0m' /*String.fromCharCode(13)*/]
 ];
 var state = {
   state: 'loading'
@@ -208,7 +216,86 @@ function search(ws, state) {
   hint(ws, state);
 }
 
-function handleInput(ws, state, callback) {
+function handleInput(ws, state, cb) {
+  var stdin = process.stdin;
+  stdin.setRawMode(true);
+  stdin.setEncoding('utf8');
+  stdin.resume();
+
+  function callback(err, result) {
+    stdin.setRawMode(false);
+    stdin.pause();
+    stdin.removeListener('data', onData);
+
+    state.input = '';
+    state.hint = '';
+
+    cb(err, result);
+  }
+
+  if (!state.input) {
+    state.input = '';
+  }
+
+  function onData(ch) {
+    ch = ch.toString('utf8');
+    state.ch = ch;
+    checkCodes(ws, state);
+
+    switch (ch) {
+    case "\n":
+    case "\r":
+    case "\u0004":
+        // They've finished typing their password
+        if (state.hint) {
+          state.input += state.hint.slice(state.input.length);
+        }
+        ws.write('\n');
+        callback(false, state.input);
+        break;
+    case "\u0003":
+        // Ctrl-C
+        callback(new Error("cancelled"));
+        break;
+    case BKSP:
+        // Backspace
+        state.input = state.input.slice(0, state.input.length - 1);
+        ws.clearLine();
+        ws.cursorTo(0);
+        ws.write(state.prompt);
+        if (state.isPassword) {
+          ws.write(state.input.split('').map(function () {
+            return '*';
+          }).join(''));
+        } else {
+          ws.write(state.input);
+        }
+        break;
+    case ARROW_UP:
+    case ARROW_DOWN:
+    case ARROW_LEFT: // TODO handle left
+        break;
+    case TAB:
+    case ARROW_RIGHT:
+        if (state.hint) {
+          ch = state.hint.slice(state.input.length);
+        } else {
+          break;
+        }
+        /* falls through */
+    default:
+        // More passsword characters
+        //process.stdout.write('*');
+        state.input += ch;
+        search(ws, state);
+        break;
+    }
+  }
+
+  stdin.on('data', onData);
+}
+
+function handleUsername(ws, state, cb) {
   var stdin = process.stdin;
   stdin.setRawMode(true);
   stdin.setEncoding('utf8');
@@ -217,57 +304,74 @@ function handleInput(ws, state, callback) {
   if (!state.input) {
     state.input = '';
   }
-  stdin.on('data', function (ch) {
-      var BKSP = String.fromCharCode(127);
-      var TAB = '\x09';
-      ch = ch.toString('utf8');
-      state.ch = ch;
-      checkCodes(ws, state);
 
-      switch (ch) {
-      case "\n":
-      case "\r":
-      case "\u0004":
-          // They've finished typing their password
-          if (state.hint) {
-            state.input += state.hint.slice(state.input.length);
-          }
-          ws.write('\n');
-          stdin.setRawMode(false);
-          stdin.pause();
-          callback(false, state.input);
+  function callback(err, result) {
+    stdin.setRawMode(false);
+    stdin.pause();
+    stdin.removeListener('data', onData);
+
+    state.input = '';
+    state.hint = '';
+
+    cb(err, result);
+  }
+
+  function onData(ch) {
+    ch = ch.toString('utf8');
+    state.ch = ch;
+    checkCodes(ws, state);
+
+    switch (ch) {
+    case "\n":
+    case "\r":
+    case "\u0004":
+        // They've finished typing their password
+        if (state.hint) {
+          state.input += state.hint.slice(state.input.length);
+        }
+        ws.write('\n');
+        callback(false, state.input);
+        break;
+    case "\u0003":
+        // Ctrl-C
+        callback(true);
+        break;
+    case BKSP:
+        // Backspace
+        state.input = state.input.slice(0, state.input.length - 1);
+        ws.clearLine();
+        ws.cursorTo(0);
+        ws.write(state.prompt);
+        if (state.isPassword) {
+          ws.write(state.input.split('').map(function () {
+            return '*';
+          }).join(''));
+        } else {
+          ws.write(state.input);
+        }
+        break;
+    case ARROW_UP:
+    case ARROW_DOWN:
+    case ARROW_LEFT: // TODO handle left
+        break;
+    case TAB:
+    case ARROW_RIGHT:
+        if (state.hint) {
+          ch = state.hint.slice(state.input.length);
+        } else {
           break;
-      case "\u0003":
-          // Ctrl-C
-          callback(true);
-          break;
-      case BKSP:
-          // Backspace
-          state.input = state.input.slice(0, state.input.length - 1);
-          ws.clearLine();
-          ws.cursorTo(0);
-          ws.write(state.prompt);
-          if (state.isPassword) {
-            ws.write(state.input.split('').map(function () {
-              return '*';
-            }).join(''));
-          } else {
-            ws.write(state.input);
-          }
-          break;
-      case TAB:
-          if (state.hint) {
-            ch = state.hint.slice(state.input.length);
-          }
-          /* falls through */
-      default:
-          // More passsword characters
-          //process.stdout.write('*');
-          state.input += ch;
-          search(ws, state);
-          break;
-      }
-  });
+        }
+        /* falls through */
+    default:
+        // More passsword characters
+        //process.stdout.write('*');
+        state.input += ch;
+        search(ws, state);
+        break;
+    }
+  }
+
+  stdin.on('data', onData);
 }
 
 function getProviderName(ws, state) {
@@ -295,12 +399,41 @@ function getProviderName(ws, state) {
       getProviderName(ws, state);
     }
 
-    getProviderDirectives(input);
+    getProviderDirectives(ws, state, input);
   });
 }
 
-function getProviderDirectives(providerUrl) {
+function getProviderDirectives(ws, state, providerUrl) {
   return A3.getOauth3Json(providerUrl).then(function (results) {
+    state.oauth3 = results;
+    state.state = 'login';
+    state.msgs = [
+      "Login Time!"
+    , ""
+    ];
+    Object.keys(results).forEach(function (key) {
+      var dir = results[key];
+
+      if (dir.method) {
+        state.msgs.push(key + " [" + dir.method + "] " + dir.url);
+      }
+    });
+    state.msgs.push('');
+    state.msgs.push('');
+    state.msgs.push('');
+    state.msgs.push("Type your email for " + providerUrl + ":");
+
+    state.error = null;
+    reCompute(ws, state);
+
+    handleUsername(ws, state, function (username) {
+      getUserMeta(ws, state, username);
+    });
+  });
+}
+
+function getUserMeta(ws, state, username) {
+  return A3.getUserMeta(state.oauth3, username).then(function (results) {
     console.log(results);
     process.exit(0);
   });
