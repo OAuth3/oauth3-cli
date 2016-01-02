@@ -29,9 +29,11 @@
   },
   "homepage": "https://github.com/OAuth3/oauth3-cli#readme",
   "dependencies": {
+    "authenticator": "^1.1.0",
     "bluebird": "^3.0.6",
     "colors": "^1.1.2",
     "escape-string-regexp": "^1.0.3",
-    "homedir": "^0.6.0"
+    "homedir": "^0.6.0",
+    "qrcode-terminal": "git+https://github.com/gtanner/qrcode-terminal.git"
   }
 }
