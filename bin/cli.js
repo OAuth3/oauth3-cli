@@ -428,7 +428,7 @@ function getProviderName(ws, state, cb) {
   });
 }
 
-function getUsername(ws, state, cb) {
+function getId(ws, state, cb) {
   state.state = 'login';
   state.msgs = [
     "Login Time!"
@@ -448,22 +448,22 @@ function getUsername(ws, state, cb) {
 
   state.error = null;
 
-  handleInput(ws, state, function (err, username) {
-    state.username = username;
+  handleInput(ws, state, function (err, userId) {
+    state.username = userId;
 
     cb(null);
   });
 }
 
 function getProviderDirectives(ws, state, cb) {
-  return A3.getOauth3Json(state.providerUrl).then(function (results) {
+  return A3.discover(state.providerUrl).then(function (results) {
     state.oauth3 = results;
     cb(null);
   });
 }
 
-function getUserMeta(ws, state, cb) {
-  return A3.getUserMeta(state.oauth3, state.username).then(function (results) {
+function getCredentialMeta(ws, state, cb) {
+  return A3.getCredentialMeta(state.oauth3, state.username).then(function (results) {
     if (!results) {
       console.error('[Error]: Sanity Check Fail: no result');
       process.exit(0);
@@ -537,10 +537,10 @@ function getSecret(ws, state, cb) {
   });
 }
 
-function createUser(ws, state, cb) {
+function createCredential(ws, state, cb) {
   // TODO standardize account creation
-  A3.createUser(state.oauth3, {
-    appId: state.oauth3.provider_uri
+  A3.createCredential(state.oauth3, {
+    appId: state.appId || state.oauth3.provider_uri
   , nodeType: 'email'
   , userId: state.username
   , secret: state.secret
@@ -550,7 +550,7 @@ function createUser(ws, state, cb) {
     state.userMeta = result;
     cb(null);
   }, function (err) {
-    console.log('[oauth3-cli] Error createUser');
+    console.log('[oauth3-cli] Error createCredential');
     console.log(err.stack);
     console.log(err.result);
     process.exit(0);
@@ -612,13 +612,31 @@ function createQr(ws, state, cb) {
   });
 }
 
-function loginUser(ws, state, cb) {
+function loginCredential(ws, state, cb) {
+  A3.requests.resourceOwnerPassword(state.oauth3, {
+    id: state.username
+  , secret: state.secret
+  , scope: state.scope
+  , totp: state.totpToken
+  , appId: state.appId || state.providerUrl
+  }).then(function (result) {
+    console.log("login NOT IMPLEMENTED");
+    console.log(result);
+    process.exit(1);
+    cb(null);
+  }, function (err) {
+    console.log("[oauth3-cli] login Error:");
+    console.log(err.stack);
+    console.log(err.result);
+    process.exit(1);
+  });
+  /*
   console.log("login NOT IMPLEMENTED");
   process.exit(1);
   state.userMeta = null;
   state.session = null;
   state.totpToken = null;
-  cb(null);
+  */
 }
 
 function doTheDo(ws, state) {
@@ -636,10 +654,10 @@ function doTheDo(ws, state) {
     getProviderDirectives(ws, state, loopit);
   }
   else if (!state.username) {
-    getUsername(ws, state, loopit);
+    getId(ws, state, loopit);
   }
   else if (!state.userMeta) {
-    getUserMeta(ws, state, loopit);
+    getCredentialMeta(ws, state, loopit);
   }
   else if (!state.userMeta.kdf) {
     if (!state.totpKey) {
@@ -649,18 +667,18 @@ function doTheDo(ws, state) {
       createSecret(ws, state, loopit);
     }
     else {
-      createUser(ws, state, loopit);
+      createCredential(ws, state, loopit);
     }
   }
   else if (!state.session) {
     if (!state.secret) {
       getSecret(ws, state, loopit);
     }
-    else if (false !== state.totpToken && !state.totpToken) {
+    else if (state.userMeta.totpEnabledAt && !state.totpToken && false !== state.totpToken) {
       getToken(ws, state, loopit);
     }
     else {
-      loginUser(ws, state, loopit);
+      loginCredential(ws, state, loopit);
     }
   }
   else {
@@ -700,6 +718,8 @@ function main(options) {
   state.providerUrl = options.provider;
   state.totpKey = options.totp;
   state.secret = options.secret;
+  state.scope = options.scope;
+  state.appId = options.client;
 
   if ('false' === state.totpKey) {
     state.totpKey = false;
@@ -722,10 +742,12 @@ function main(options) {
 }
 
 cli.parse({
-  provider: [ false, "Provider URI which to use (such as facebook.com)", 'string' ]
+  provider: [ false, "Provider URL which to use (such as facebook.com)", 'string' ]
 , id: [ false, "The login id, typically your email address", 'string' ]
 , secret: [ false, "The login shared secret, typically your passphrase (12+ characters, ~72+ bits)", 'string' ]
 , totp: [ false, "base32-encoded 160-bit key to use for account creation (or false to disable)", 'string' ]
+, scope: [ false, "OAuth scope", 'string' ]
+, client: [ false, "OAuth client id (if different than provider url)", 'string' ]
 });
 
 // ignore certonly and extraneous arguments
