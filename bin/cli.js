@@ -1,6 +1,5 @@
 'use strict';
 
-var escapeRe = require('escape-string-regexp');
 var path = require('path');
 var cli = require('cli');
 var colors = require('colors/safe');
@@ -539,6 +538,7 @@ function getSecret(ws, state, cb) {
 }
 
 function createUser(ws, state, cb) {
+  // TODO standardize account creation
   A3.createUser(state.oauth3, {
     appId: state.oauth3.provider_uri
   , nodeType: 'email'
@@ -546,18 +546,14 @@ function createUser(ws, state, cb) {
   , secret: state.secret
   , mfa: state.totpKey && { totp: state.totpKey }
   }).then(function (result) {
-    if (result.jwt || result.access_token) {
-      state.userMeta = result;
-      state.session = result;
-      // TODO save to file
-    } else {
-      state.userMeta = null;
-      state.session = null;
-      console.log(result);
-      process.exit(0);
-    }
-
+    // TODO save credential meta to file (and account later)
+    state.userMeta = result;
     cb(null);
+  }, function (err) {
+    console.log('[oauth3-cli] Error createUser');
+    console.log(err.stack);
+    console.log(err.result);
+    process.exit(0);
   });
 }
 
@@ -617,6 +613,8 @@ function createQr(ws, state, cb) {
 }
 
 function loginUser(ws, state, cb) {
+  console.log("login NOT IMPLEMENTED");
+  process.exit(1);
   state.userMeta = null;
   state.session = null;
   state.totpToken = null;
@@ -703,6 +701,18 @@ function main(options) {
   state.totpKey = options.totp;
   state.secret = options.secret;
 
+  if ('false' === state.totpKey) {
+    state.totpKey = false;
+    state.totpToken = false;
+  }
+
+  if (state.totpKey) {
+    state.totpToken = authenticator.generateToken(state.totpKey);
+    if (!state.totpToken) {
+      throw new Error("invalid totp key");
+    }
+  }
+
   ws.on('resize', function () {
     reCompute(ws, state);
   });
@@ -715,7 +725,7 @@ cli.parse({
   provider: [ false, "Provider URI which to use (such as facebook.com)", 'string' ]
 , id: [ false, "The login id, typically your email address", 'string' ]
 , secret: [ false, "The login shared secret, typically your passphrase (12+ characters, ~72+ bits)", 'string' ]
-, totp: [ false, "base32-encoded 160-bit key to use for account creation", 'string' ]
+, totp: [ false, "base32-encoded 160-bit key to use for account creation (or false to disable)", 'string' ]
 });
 
 // ignore certonly and extraneous arguments
