@@ -105,10 +105,8 @@ function writeMenu(ws, state) {
   ws.cursorTo(0, rows - 2);
   ws.write(line.replace(/./g, '-'));
 
-  // Prompt
-  var prompt = state.prompt || '> ';
   ws.cursorTo(0, rows - 1);
-  ws.write(prompt);
+  writePrompt(ws, state);
 }
 
 // excuse me. EXCUSE ME. SECURDY SE-CURDY.
@@ -256,8 +254,7 @@ function hint(ws, state) {
 
   //ws.clearLine();
   ws.cursorTo(0);
-  ws.write(state.prompt);
-  //ws.write(prompt); // colors.bold(state.input));
+  writePrompt(ws, state);
   ws.write(complete);
   ws.moveCursor(-1 * part.length, 0);
 }
@@ -290,6 +287,8 @@ function handleInput(ws, state, cb) {
 
   state.input = '';
   state.hint = '';
+
+  reCompute(ws, state);
 
   function callback(err, result) {
     stdin.removeListener('data', onData);
@@ -367,11 +366,27 @@ function handleInput(ws, state, cb) {
   stdin.on('data', onData);
 }
 
+function writePrompt(ws, state) {
+  // Prompt
+  var prompt = state.prompt || '> ';
+
+  if (state.isSecret) {
+    if (state.unmask) {
+      prompt += '(↓ to hide)';
+    } else {
+      prompt += '(↑ to show)';
+    }
+    prompt += ': ';
+  }
+
+  ws.write(prompt);
+}
+
 function writeSecret(ws, state) {
   var input;
 
   ws.cursorTo(0);
-  ws.write(state.prompt);
+  writePrompt(ws, state);
   // TODO support utf8
   if (state.unmask) {
     input = state.input;
@@ -400,7 +415,6 @@ function getProviderName(ws, state, cb) {
   state.msgs.push('');
   state.msgs.push('Type the name of one of the account providers above (or any of your choosing)');
   state.error = null;
-  reCompute(ws, state);
   state.prompt = '> ';
 
   // TODO allow commandline argument for provider
@@ -434,7 +448,6 @@ function getUsername(ws, state, cb) {
   state.msgs.push("Type your email for " + state.providerUrl + ":");
 
   state.error = null;
-  reCompute(ws, state);
 
   handleInput(ws, state, function (err, username) {
     state.username = username;
@@ -488,8 +501,6 @@ function getToken(ws, state, cb) {
   ];
   state.prompt = 'Authenticator 6-digit token: ';
 
-  reCompute(ws, state);
-
   handleInput(ws, state, function (err, token) {
     state.totpToken = token || false;
 
@@ -504,9 +515,7 @@ function createSecret(ws, state, cb) {
   , ""
   , "Choose something 16 characters or more"
   ];
-  state.prompt = 'Enter your Passphrase (↑ to show, ↓ to hide): ';
-
-  reCompute(ws, state);
+  state.prompt = 'Enter your Passphrase ';
 
   handleSecret(ws, state, function (err, secret) {
     state.secret = secret;
@@ -520,9 +529,7 @@ function getSecret(ws, state, cb) {
   state.msgs = [
     "Now it's time to enter your passphrase"
   ];
-  state.prompt = 'Create a Passphrase (↑ to show, ↓ to hide): ';
-
-  reCompute(ws, state);
+  state.prompt = 'Create a Passphrase ';
 
   handleSecret(ws, state, function (err, secret) {
     state.secret = secret;
@@ -593,7 +600,6 @@ function createQr(ws, state, cb) {
 
   state.error = null;
   state.prompt = '6-digit Token: ';
-  reCompute(ws, state);
 
   // TODO handle token as 000000 with delimeters '-', ' ', or '.'
   handleInput(ws, state, function (err, token) {
@@ -615,10 +621,6 @@ function loginUser(ws, state, cb) {
   state.session = null;
   state.totpToken = null;
   cb(null);
-  /*
-  handleSecret(ws, state, function (err, secret) {
-  });
-  */
 }
 
 function doTheDo(ws, state) {
