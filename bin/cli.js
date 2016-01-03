@@ -698,9 +698,10 @@ function main(options) {
   var homedir = require('homedir')();
 
   state.homedir = homedir;
-  state.username = options.id || state.username;
-  state.providerUrl = options.provider || state.providerUrl;
-  state.totpKey = options.totp || state.totpKey;
+  state.username = options.id;
+  state.providerUrl = options.provider;
+  state.totpKey = options.totp;
+  state.secret = options.secret;
 
   ws.on('resize', function () {
     reCompute(ws, state);
@@ -713,6 +714,7 @@ function main(options) {
 cli.parse({
   provider: [ false, "Provider URI which to use (such as facebook.com)", 'string' ]
 , id: [ false, "The login id, typically your email address", 'string' ]
+, secret: [ false, "The login shared secret, typically your passphrase (12+ characters, ~72+ bits)", 'string' ]
 , totp: [ false, "base32-encoded 160-bit key to use for account creation", 'string' ]
 });
 
