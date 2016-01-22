@@ -1,5 +1,6 @@
 'use strict';
 
+var PromiseA = require('bluebird');
 var path = require('path');
 var cli = require('cli');
 var colors = require('colors/safe');
@@ -545,8 +546,11 @@ function createCredential(ws, state, cb) {
   , userId: state.username
   , secret: state.secret
   , mfa: state.totpKey && { totp: state.totpKey }
+  //, tetantId: state.tenantId
   }).then(function (result) {
     // TODO save credential meta to file (and account later)
+    console.log('[oauth3-cli] Success createCredential');
+    console.log(result);
     state.userMeta = result;
     cb(null);
   }, function (err) {
@@ -613,30 +617,51 @@ function createQr(ws, state, cb) {
 }
 
 function loginCredential(ws, state, cb) {
-  A3.requests.resourceOwnerPassword(state.oauth3, {
-    id: state.username
-  , secret: state.secret
-  , scope: state.scope
-  , totp: state.totpToken
-  , appId: state.appId || state.providerUrl
-  }).then(function (result) {
-    console.log("login NOT IMPLEMENTED");
-    console.log(result);
-    process.exit(1);
-    cb(null);
-  }, function (err) {
-    console.log("[oauth3-cli] login Error:");
-    console.log(err.stack);
-    console.log(err.result);
-    process.exit(1);
+  A3.getProof(state.oauth3, state.userMeta, state.secret).then(function (proofstr) {
+    return A3.requests.resourceOwnerPassword(state.oauth3, {
+      id: state.username
+    , secret: proofstr
+    , scope: state.scope
+    , totp: state.totpToken
+    , appId: state.appId || state.providerUrl
+    , clientAgreeTos: 'oauth3.org/tos/draft'
+    , clientUri: 'oauth3.org'
+    // , tenantId: 'oauth3.org' // TODO make server assume default tenant
+    }).then(function (result) {
+      var err;
+
+      state.secret = null;  // ditto
+      proofstr = null;      // garbage collect the secret faster
+      if (result.error) {
+        err = new Error(result.error.message || result.error_description);
+        err.code = result.error.code || result.error;
+        err.uri = result.error.uri || result.error_uri;
+        err.result = result;
+
+        return PromiseA.reject(err);
+      }
+
+      return result;
+    }).then(function (result) {
+      console.log("[oauth3-cli] login NOT IMPLEMENTED");
+      console.log(result);
+      process.exit(1);
+      cb(null);
+    }, function (err) {
+      state.secret = null;  // ditto
+      proofstr = null;      // garbage collect the secret faster
+      console.log("[oauth3-cli] login Error:");
+      console.log(err.stack);
+      console.log(err.result);
+      process.exit(1);
+      /*
+      state.userMeta = null;
+      state.session = null;
+      state.totpToken = null;
+      */
+      //cb(err);
+    });
   });
-  /*
-  console.log("login NOT IMPLEMENTED");
-  process.exit(1);
-  state.userMeta = null;
-  state.session = null;
-  state.totpToken = null;
-  */
 }
 
 function doTheDo(ws, state) {
