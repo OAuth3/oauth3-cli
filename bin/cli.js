@@ -8,6 +8,7 @@ var authenticator = require('authenticator');
 var qrcode = require('qrcode-terminal');
 var A = require('../');
 var A3 = require('../lib/utils');
+var jwt = require('jsonwebtoken');
 
 var BKSP = String.fromCharCode(127);
 var ENTER = "\u0004";           // 13 // '\u001B[0m'
@@ -478,6 +479,10 @@ function getCredentialMeta(ws, state, cb) {
     }
 
     if (results.error) {
+      //console.log('[oauth3-cli] DEBUG getCredentialMeta');
+      //console.log(results);
+      //process.exit(1);
+
       // TODO results.code
       if (/not exist/.test(results.error.message || results.error.description)) {
         state.userMeta = {};
@@ -549,14 +554,17 @@ function createCredential(ws, state, cb) {
   //, tetantId: state.tenantId
   }).then(function (result) {
     // TODO save credential meta to file (and account later)
-    console.log('[oauth3-cli] Success createCredential');
-    console.log(result);
+    //console.log('[oauth3-cli] Success createCredential');
+    //console.log(result);
     state.userMeta = result;
+      //console.log('[oauth3-cli] DEBUG');
+      //console.log(result);
+      //process.exit(1);
     cb(null);
   }, function (err) {
-    console.log('[oauth3-cli] Error createCredential');
-    console.log(err.stack);
-    console.log(err.result);
+    console.error('[oauth3-cli] Error createCredential');
+    console.error(err.stack);
+    console.error(err.result);
     process.exit(0);
   });
 }
@@ -643,16 +651,16 @@ function loginCredential(ws, state, cb) {
 
       return result;
     }).then(function (result) {
-      console.log("[oauth3-cli] login NOT IMPLEMENTED");
-      console.log(result);
-      process.exit(1);
+      state.session = result;
+      state.session.decoded = jwt.decode(state.session.accessToken);
+
       cb(null);
     }, function (err) {
       state.secret = null;  // ditto
       proofstr = null;      // garbage collect the secret faster
-      console.log("[oauth3-cli] login Error:");
-      console.log(err.stack);
-      console.log(err.result);
+      console.error("[oauth3-cli] login Error:");
+      console.error(err.stack || err);
+      console.error(err.result);
       process.exit(1);
       /*
       state.userMeta = null;
@@ -661,6 +669,81 @@ function loginCredential(ws, state, cb) {
       */
       //cb(err);
     });
+  });
+}
+
+function testSession(ws, state, cb) {
+  A3.requests.inspectToken(state.oauth3, state.session).then(function (/*result*/) {
+    state.sessionTested = true;
+    cb(null);
+  });
+}
+
+function getAccounts(ws, state, cb) {
+  // TODO force account refresh
+  var decoded = state.session.decoded;
+  var accounts = decoded.axs || decoded.acs
+    || (decoded.acx && [ { idx: decoded.acx } ])
+    || (decoded.acc && [ { id: decoded.acc } ])
+    ;
+
+  if (accounts) {
+    state.accounts = accounts;
+    cb(null);
+    return;
+  }
+
+  if (!state.oauth3.accounts) {
+    console.log("[oauth3-cli] handle profile NOT IMPLEMENTED");
+    process.exit(1);
+    /*
+    if (!state.oauth3.profile) {
+    }
+    */
+  }
+
+  A3.requests.accounts(state.oauth3, state.session).then(function (result) {
+    state.accounts = result.accounts;
+    cb(null);
+  }, function (err) {
+    console.error("[oauth3-cli] accounts Error:");
+    console.error(err.stack || err);
+    console.error(err.result);
+    process.exit(1);
+  });
+}
+
+function getAccount(ws, state, cb) {
+  if (!state.accounts.length) {
+    createAccount(ws, state, cb);
+    return;
+  }
+
+  // TODO show selection menu
+  state.account = state.accounts[0];
+  cb(null);
+}
+
+function createAccount(ws, state, cb) {
+  // TODO if (!state.nick) { getNick(ws, state, function () { ... }); }
+  A3.requests.accounts.create(state.oauth3, state.session, {
+    nick: state.nick
+  , self: {
+      comment: 'created by oauth3.org cli'
+    }
+  }).then(function (result) {
+    state.session.accessToken = result.accessToken || result.access_token;
+    state.session.decoded = jwt.decode(state.session.accessToken);
+
+    state.accounts = null;
+    state.account = result.account;
+
+    cb(null);
+  }, function (err) {
+    console.error("[oauth3-cli] account Error:");
+    console.error(err.stack || err);
+    console.error(err.result);
+    process.exit(1);
   });
 }
 
@@ -685,6 +768,10 @@ function doTheDo(ws, state) {
     getCredentialMeta(ws, state, loopit);
   }
   else if (!state.userMeta.kdf) {
+      //console.log('[oauth3-cli] DEBUG userMeta');
+      //console.log(state.userMeta);
+      //process.exit(1);
+
     if (!state.totpKey) {
       createQr(ws, state, loopit);
     }
@@ -706,9 +793,18 @@ function doTheDo(ws, state) {
       loginCredential(ws, state, loopit);
     }
   }
+  else if (!(state.sessionTested)) {
+    testSession(ws, state, loopit);
+  }
+  else if (!(state.accounts || state.profile)) {
+    getAccounts(ws, state, loopit);
+  }
+  else if (state.accounts && !state.accounts.length) {
+    getAccount(ws, state, loopit);
+  }
   else {
-    console.log("NOT IMPLEMENTED");
-    process.exit(1);
+    console.log("[oauth3-cli] complete / NOT IMPLEMENTED");
+    console.log(state.session.decoded);
   }
 }
 
