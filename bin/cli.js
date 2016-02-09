@@ -724,6 +724,14 @@ function getAccount(ws, state, cb) {
   cb(null);
 }
 
+function getEcho(ws, state, cb) {
+  state.echo = true;
+  A3.requests.echo(state.oauth3, state.session).then(function (result) {
+    console.log(result);
+    cb(null);
+  });
+}
+
 function createAccount(ws, state, cb) {
   // TODO if (!state.nick) { getNick(ws, state, function () { ... }); }
   A3.requests.accounts.create(state.oauth3, state.session, {
@@ -801,6 +809,9 @@ function doTheDo(ws, state) {
   }
   else if (state.accounts && !state.accounts.length) {
     getAccount(ws, state, loopit);
+  }
+  else if (!state.echo) {
+    getEcho(ws, state, loopit);
   }
   else {
     console.log("[oauth3-cli] complete / NOT IMPLEMENTED");
