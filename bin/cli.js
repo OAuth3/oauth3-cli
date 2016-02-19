@@ -675,7 +675,10 @@ function loginCredential(ws, state, cb) {
 function testSession(ws, state, cb) {
   A3.requests.inspectToken(state.oauth3, state.session).then(function (/*result*/) {
     state.sessionTested = true;
-    cb(null);
+
+    A.saveSession(state).then(function () {
+      cb(null);
+    });
   });
 }
 
@@ -732,6 +735,62 @@ function getEcho(ws, state, cb) {
   });
 }
 
+function getCards(ws, state, cb) {
+  state.card = true;
+  A3.requests.cards(state.oauth3, state.session).then(function (result) {
+    console.log(result);
+    cb(null);
+  });
+}
+
+function getExistingSession(ws, state, cb) {
+  A.session(state).then(function (session) {
+    var now;
+    var then;
+
+    if (!session) {
+      cb(null);
+      return;
+    }
+
+    now = Date.now();
+    then = parseInt(session.session.decoded.exp, 10) * 1000;
+    if (now < then) {
+      state.accounts = session.accounts;
+      state.userMeta = session.userMeta;
+      state.session = session.session;
+
+      cb(null);
+      return;
+    }
+
+    return A3.requests.refreshToken(state.oauth3, {
+      appId: state.appId || state.providerUrl
+    , clientAgreeTos: 'oauth3.org/tos/draft'
+    , clientUri: 'oauth3.org'
+    //, scope: state.scope
+    // , tenantId: 'oauth3.org' // TODO make server assume default tenant
+    , refreshToken: session.session.refreshToken
+    }).then(function (results) {
+      results.refreshToken = results.refreshToken || session.session.refreshToken;
+
+      state.accounts = null;
+      state.account = null;
+
+      state.session = results;
+      state.session.decoded = jwt.decode(state.session.accessToken);
+
+      cb(null);
+    }, function (err) {
+      console.error('[oauth3-cli] Refresh Token failure:');
+      console.error(Object.keys(err));
+      console.error(err);
+      process.exit(1);
+      cb(null);
+    });
+  });
+}
+
 function createAccount(ws, state, cb) {
   // TODO if (!state.nick) { getNick(ws, state, function () { ... }); }
   A3.requests.accounts.create(state.oauth3, state.session, {
@@ -763,6 +822,9 @@ function doTheDo(ws, state) {
   if (!state.configs) {
     loadProfiles(ws, state, loopit);
   }
+  else if (!state.device) {
+    loadDevice(ws, state, loopit);
+  }
   else if (!state.providerUrl) {
     getProviderName(ws, state, loopit);
   }
@@ -772,6 +834,10 @@ function doTheDo(ws, state) {
   else if (!state.username) {
     getId(ws, state, loopit);
   }
+  else if (!state.triedSession) {
+    getExistingSession(ws, state, loopit);
+  }
+  // TODO load profile by provider / username
   else if (!state.userMeta) {
     getCredentialMeta(ws, state, loopit);
   }
@@ -813,6 +879,9 @@ function doTheDo(ws, state) {
   else if (!state.echo) {
     getEcho(ws, state, loopit);
   }
+  else if (!state.card) {
+    getCards(ws, state, loopit);
+  }
   else {
     console.log("[oauth3-cli] complete / NOT IMPLEMENTED");
     console.log(state.session.decoded);
@@ -820,10 +889,8 @@ function doTheDo(ws, state) {
 }
 
 function loadProfiles(ws, state, cb) {
-  var rcpath = path.join(state.homedir, '.oauth3');
-
   A.profile({
-    rcpath: rcpath
+    rcpath: state.rcpath
   }).then(function (results) {
     if (results.errors.length) {
       state.msgs = results.errors.map(function (err) {
@@ -839,6 +906,15 @@ function loadProfiles(ws, state, cb) {
   });
 }
 
+function loadDevice(ws, state, cb) {
+  A.device({
+    rcpath: state.rcpath
+  }).then(function (results) {
+    state.device = results.device;
+    cb(null);
+  });
+}
+
 function main(options) {
   //var readline = require('readline');
   //var rl = readline.createInterface(process.stdin, process.stdout);
@@ -846,6 +922,7 @@ function main(options) {
   var homedir = require('homedir')();
 
   state.homedir = homedir;
+  state.rcpath = path.join(state.homedir, '.oauth3');
   state.username = options.id;
   state.providerUrl = options.provider;
   state.totpKey = options.totp;
