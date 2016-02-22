@@ -263,11 +263,52 @@ function hint(ws, state) {
 function search(ws, state) {
   var hints = state.hints.filter(function (provider) {
     //return provider.toLowerCase().match(new RegExp(escapeRe('^' + state.input)));
-    return state.input && 0 === provider.toLowerCase().indexOf(state.input);
+    return (state.input || state.autohint) && 0 === provider.toLowerCase().indexOf(state.input);
   });
 
   state.hint = hints[0] || '';
   hint(ws, state);
+}
+
+function getEmailHints(input) {
+  // TODO also include known providers (oauth3.org, facebook.com, etc)
+  // and previously used email addresses
+  var provider = input.replace(/.*@/, '').toLowerCase();
+
+  if (input.length < 3) {
+    return [];
+  }
+
+  return [
+    'gmail.com'
+  , 'yahoo.com'
+  , 'ymail.com'
+  , 'outlook.com'
+  , 'hotmail.com'
+  , 'live.com'
+  , 'msn.com'
+  , 'yandex.com'
+  , 'aol.com'
+  , 'icloud.com'
+  , 'me.com'
+  , 'mail.com'
+  , 'gmx.com'
+  , 'inbox.com'
+  , 'lycos.com'
+  , 'zoho.com'
+  , 'hushmail.com'
+  , 'hushmail.me'
+  , 'hush.com'
+  , 'hush.ai'
+  , 'mac.hush.com'
+  ].filter(function (str) {
+    return 0 === str.indexOf(provider);
+  }).map(function (str) {
+    if (!provider) {
+      return input.replace(/@/, '') + '@' + str;
+    }
+    return input + str.substr(provider.length);
+  });
 }
 
 function getCcRule(num) {
@@ -495,8 +536,13 @@ function formatCcCvc(ws, state) {
 
 		prevc = c;
 	});
+
   if (arr.length) {
-    input += arr.join('');
+    if (state.unmask) {
+      input += arr.join('');
+    } else {
+      input += arr.map(function () { return '*'; }).join('');
+    }
   }
 
 	part = rule.cvc.substr(input.length);
@@ -510,12 +556,10 @@ function formatCcCvc(ws, state) {
 
 function handleCcNumber(ws, state, cb) {
   state.isSecret = true;
-  state.unmask = true;
 	state.inputCallback = formatCcNumber;
 
   handleInput(ws, state, function (err, result) {
     state.isSecret = false;
-    state.unmask = true;
 		state.inputCallback = null;
     cb(err, result);
   });
@@ -526,12 +570,10 @@ function handleCcNumber(ws, state, cb) {
 
 function handleCcExp(ws, state, cb) {
   state.isSecret = true;
-  state.unmask = true;
 	state.inputCallback = formatCcExp;
 
   handleInput(ws, state, function (err, result) {
     state.isSecret = false;
-    state.unmask = true;
 		state.inputCallback = null;
     cb(err, result);
   });
@@ -542,12 +584,10 @@ function handleCcExp(ws, state, cb) {
 
 function handleCcCvc(ws, state, cb) {
   state.isSecret = true;
-  state.unmask = true;
 	state.inputCallback = formatCcCvc;
 
   handleInput(ws, state, function (err, result) {
     state.isSecret = false;
-    state.unmask = true;
 		state.inputCallback = null;
     cb(err, result);
   });
@@ -558,10 +598,8 @@ function handleCcCvc(ws, state, cb) {
 
 function handleSecret(ws, state, cb) {
   state.isSecret = true;
-  state.unmask = false;
   handleInput(ws, state, function (err, result) {
     state.isSecret = false;
-    state.unmask = true;
     cb(err, result);
   });
 }
@@ -643,13 +681,13 @@ function handleInput(ws, state, cb) {
     //process.stdout.write('*');
     state.input += ch;
 
-    if (!state.isSecret) {
-      search(ws, state);
+    if (state.inputCallback) {
+      state.inputCallback(ws, state);
       return;
     }
 
-    if (state.inputCallback) {
-      state.inputCallback(ws, state);
+    if (!state.isSecret) {
+      search(ws, state);
       return;
     }
 
@@ -821,6 +859,42 @@ function createSecret(ws, state, cb) {
   });
 }
 
+function getCcEmail(ws, state, cb) {
+  state.state = 'email';
+  state.autohint = true;
+  state.hints = state.username && [state.username] || getEmailHints(state.input);
+  state.msgs = [
+    "Email Address for Credit Card"
+  , ""
+  , ""
+  , ""
+  ];
+  state.error = null;
+  state.prompt = 'Email Address: ';
+
+  state.inputCallback = function (ws, state) {
+    state.hints = getEmailHints(state.input);
+    if (/@/.test(state.username)) {
+      state.hints.unshift(state.username);
+    }
+    search(ws, state);
+  };
+  handleInput(ws, state, function (err, result) {
+    state.inputCallback = null;
+    state.autohint = false;
+
+    if (!result) {
+      state.error = "";
+      getCcEmail(ws, state, cb);
+    }
+
+    state.email = result;
+    cb(err, result);
+  });
+
+  search(ws, state);
+}
+
 function getCcNumber(ws, state, cb) {
   state.state = 'cc';
   state.msgs = [
@@ -862,16 +936,21 @@ function getCcCvc(ws, state, cb) {
 }
 
 function createCreditCard(ws, state, cb) {
+  state.unmask = true;
   getCcNumber(ws, state, function (err, num) {
     getCcExp(ws, state, function (err, exp) {
       getCcCvc(ws, state, function (err, cvc) {
-        cb(null, {
-          type: state.ccRule.abbr
-        , name: state.ccRule.name
-        , number: num
-        , cvc: cvc
-        , month: exp.substr(0, 2)
-        , year: '20' + exp.substr(2, 2)
+        state.unmask = true;
+        getCcEmail(ws, state, function (err, email) {
+          cb(null, {
+            type: state.ccRule.abbr
+          , name: state.ccRule.name
+          , number: num
+          , cvc: cvc
+          , month: exp.substr(0, 2)
+          , year: '20' + exp.substr(2, 2)
+          , email: email
+          });
         });
       });
     });
@@ -1328,10 +1407,10 @@ cli.parse({
 , scope: [ false, "OAuth scope", 'string' ]
 , client: [ false, "OAuth client id (if different than provider url)", 'string' ]
 
-, 'cc': [ false, "Credit Card number (xxxx-xxxx-xxxx-xxxx)", 'string' ]
+, 'cc-number': [ false, "Credit Card number (xxxx-xxxx-xxxx-xxxx)", 'string' ]
 , 'cc-exp': [ false, "Credit Card expiration (mm/yy)", 'string' ]
 , 'cc-cvv': [ false, "Credit Card Verification Code (xxx)", 'string' ]
-, 'cc-email': [ false, "Credit Card nickname (xxxxxx@xxxx.xxx)", 'string' ]
+, 'cc-email': [ false, "Credit Card email (xxxxxx@xxxx.xxx)", 'string' ]
 , 'cc-nick': [ false, "Credit Card nickname (defaults to email)", 'string' ]
 });
 
