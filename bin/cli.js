@@ -270,6 +270,292 @@ function search(ws, state) {
   hint(ws, state);
 }
 
+function getCcRule(num) {
+	var rule = {
+		name: 'Credit Card'
+  , abbr: 'unknown'
+	, format: 'xxxx-xxxx-xxxx-yyyy'
+  , cvc: 'xxx'
+	};
+	var defaultRule = rule;
+  var ccs = [
+		{ abbr: 'electron'
+		, name: 'Electron'
+		, re: /^(4026|417500|4405|4508|4844|4913|4917)\d+$/
+		}
+	, { abbr: 'maestro'
+		, name: 'Maestro'
+		, re: /^(5018|5020|5038|5612|5893|6304|6759|6761|6762|6763|0604|6390)\d+$/
+		}
+	, { abbr: 'dankort'
+		, name: 'Dankort'
+		, re: /^(5019)\d+$/
+		}
+	, { abbr: 'interpayment'
+		, name: 'InterPayment'
+		, re: /^(636)\d+$/
+		}
+	, { abbr: 'unionpay'
+		, name: 'UnionPay'
+		, re: /^(62|88)\d+$/
+		}
+	, { abbr: 'visa'
+		, name: 'Visa'
+		, re: /^4[0-9]{0,12}(?:[0-9]{3})?$/
+		, format: 'xxxx-xxxx-xxxx-yyyy'
+		}
+	, { abbr: 'mastercard'
+		, name: 'MasterCard'
+		, re: /^5[1-5][0-9]{0,14}$/
+		, format: 'xxxx-xxxx-xxxx-yyyy'
+		}
+	, { abbr: 'amex'
+		, name: 'American Express'
+		, re: /^3[47][0-9]{0,13}$/
+		, format: 'xxxx-xxxxxx-xyyyy'
+    , cvc: 'xxxx'
+		}
+	, { abbr: 'diners'
+		, name: 'Diners Club'
+		, re: /^3(?:0[0-5]|[68][0-9])[0-9]{0,11}$/
+		}
+	, { abbr: 'discover'
+		, name: 'Discover'
+		, re: /^6(?:011|5[0-9]{2})[0-9]{0,12}$/
+		, format: 'xxxx-xxxx-xxxx-yyyy'
+		}
+	, { abbr: 'jcb'
+		, name: 'JCB'
+		, re: /^(?:2131|1800|35\d{3})\d{0,11}$/
+		}
+  ];
+	var maxlen = ccs.reduce(function (max, dir) { return Math.max(max, dir.name.length); }, 0) + 1;
+
+	num = num.replace(/\D/g, '');
+	ccs.some(function (_rule) {
+		if (_rule.re.test(num)) {
+			rule = _rule;
+			return true;
+		}
+	});
+	rule.format = rule.format || defaultRule.format;
+	rule.cvc = rule.cvc || defaultRule.cvc;
+  rule.maxlen = maxlen;
+
+  return rule;
+}
+
+function formatCcNumber(ws, state) {
+  // http://stackoverflow.com/questions/72768/how-do-you-detect-credit-card-type-based-on-number
+  var rule = getCcRule(state.input);
+	var	arr;
+	var prevc;
+	var complete;
+	var part;
+	var input = '';
+
+	state.input = state.input.replace(/\D/g, '');
+
+  state.ccRule = rule;
+
+	arr = state.input.split('');
+	rule.format.split('').forEach(function (ch) {
+		var c;
+
+		if ('x' === ch || 'y' === ch) {
+ 			c = arr.shift();
+			if ('y' === ch || state.unmask || !arr.length) {
+				input += (c && c || '');
+			} else {
+				input += (c && '*' || '');
+			}
+		}
+		else if ('-' === ch) {
+			if (prevc) {
+				input += ch;
+			}
+		}
+		else {
+			console.error('Internal Error (not your fault): Unexpected Card Format: ' + rule.format);
+			process.exit(1);
+		}
+
+		prevc = c;
+	});
+  if (arr.length) {
+    input += '-' + arr.join('');
+  }
+
+	part = rule.format.substr(input.length);
+  complete = colors.bold(input) + colors.dim(part.replace(/y/g, 'x'));
+	state.prompt = rule.name;
+	while (state.prompt.length < rule.maxlen) {
+		state.prompt += ' ';
+	}
+
+  ws.cursorTo(0);
+  writePrompt(ws, state);
+  ws.write(complete);
+  ws.moveCursor(-1 * part.length, 0);
+}
+
+function formatCcExp(ws, state) {
+  // TODO enforce that the expiration must be no sooner than yesterday
+  // (this should account for international date drift)
+  // TODO enforce
+	var	arr;
+	var prevc;
+	var complete;
+	var part;
+	var input = '';
+  var format = 'mm/yy';
+  var month = 0;
+
+  //  '0' -> 0
+  //  '1' -> 1
+  //  '2' -> 02
+  // '1/' -> 01
+  // '13' -> 1
+  if (/0-9/.test(state.input[0]) && '/' === state.input[1]) {
+    state.input = '0' + state.input;
+  }
+	state.input = state.input.replace(/\D/g, '');
+  if (state.input[0] > 1) {
+    state.input = '0' + state.input;
+  }
+  month = parseInt(state.input.substr(0, 2), 10) || 0;
+  if (month < 1 || month > 11) {
+    state.input = state.input[0] || '';
+  }
+  state.input = state.input.substr(0, 4);
+
+	arr = state.input.split('');
+	format.split('').forEach(function (ch) {
+		var c;
+
+		if ('m' === ch || 'y' === ch) {
+ 			c = arr.shift();
+			if (state.unmask || !arr.length) {
+				input += (c && c || '');
+			} else {
+				input += (c && '*' || '');
+			}
+		}
+		else if ('/' === ch) {
+			if (prevc) {
+				input += ch;
+			}
+		}
+		else {
+			console.error('Internal Error (not your fault): Unexpected Expiration Format: ' + format);
+			process.exit(1);
+		}
+
+		prevc = c;
+	});
+  if (arr.length) {
+    input += '/' + arr.join('');
+  }
+
+	part = format.substr(input.length);
+  complete = colors.bold(input) + colors.dim(part);
+
+  ws.cursorTo(0);
+  writePrompt(ws, state);
+  ws.write(complete);
+  ws.moveCursor(-1 * part.length, 0);
+}
+
+function formatCcCvc(ws, state) {
+  var rule = state.ccRule;
+	var	arr;
+	var prevc;
+	var complete;
+	var part;
+	var input = '';
+
+	state.input = state.input.replace(/\D/g, '');
+
+	arr = state.input.split('');
+	rule.cvc.split('').forEach(function (ch) {
+		var c;
+
+		if ('x' === ch) {
+ 			c = arr.shift();
+			if (state.unmask || !arr.length) {
+				input += (c && c || '');
+			} else {
+				input += (c && '*' || '');
+			}
+		}
+		else {
+			console.error('Internal Error (not your fault): Unexpected CVC Format: ' + rule.cvc);
+			process.exit(1);
+		}
+
+		prevc = c;
+	});
+  if (arr.length) {
+    input += arr.join('');
+  }
+
+	part = rule.cvc.substr(input.length);
+  complete = colors.bold(input) + colors.dim(part);
+
+  ws.cursorTo(0);
+  writePrompt(ws, state);
+  ws.write(complete);
+  ws.moveCursor(-1 * part.length, 0);
+}
+
+function handleCcNumber(ws, state, cb) {
+  state.isSecret = true;
+  state.unmask = true;
+	state.inputCallback = formatCcNumber;
+
+  handleInput(ws, state, function (err, result) {
+    state.isSecret = false;
+    state.unmask = true;
+		state.inputCallback = null;
+    cb(err, result);
+  });
+
+  // pre-fill suggestion
+	state.inputCallback(ws, state);
+}
+
+function handleCcExp(ws, state, cb) {
+  state.isSecret = true;
+  state.unmask = true;
+	state.inputCallback = formatCcExp;
+
+  handleInput(ws, state, function (err, result) {
+    state.isSecret = false;
+    state.unmask = true;
+		state.inputCallback = null;
+    cb(err, result);
+  });
+
+  // pre-fill suggestion
+	state.inputCallback(ws, state);
+}
+
+function handleCcCvc(ws, state, cb) {
+  state.isSecret = true;
+  state.unmask = true;
+	state.inputCallback = formatCcCvc;
+
+  handleInput(ws, state, function (err, result) {
+    state.isSecret = false;
+    state.unmask = true;
+		state.inputCallback = null;
+    cb(err, result);
+  });
+
+  // pre-fill suggestion
+	state.inputCallback(ws, state);
+}
+
 function handleSecret(ws, state, cb) {
   state.isSecret = true;
   state.unmask = false;
@@ -282,6 +568,7 @@ function handleSecret(ws, state, cb) {
 
 function handleInput(ws, state, cb) {
   var stdin = process.stdin;
+
   stdin.setRawMode(true);
   stdin.setEncoding('utf8');
   stdin.resume();
@@ -358,6 +645,11 @@ function handleInput(ws, state, cb) {
 
     if (!state.isSecret) {
       search(ws, state);
+      return;
+    }
+
+    if (state.inputCallback) {
+      state.inputCallback(ws, state);
       return;
     }
 
@@ -527,6 +819,64 @@ function createSecret(ws, state, cb) {
 
     cb(null);
   });
+}
+
+function getCcNumber(ws, state, cb) {
+  state.state = 'cc';
+  state.msgs = [
+    "Credit Card Number"
+  , ""
+  , "You card information will be stored SECURE and encrypted with Stripe.com"
+  , "it WILL NOT BE SAVED on this computer or our servers"
+  ];
+  state.prompt = 'Card Number      ';
+  //state.prompt = 'American Express ';
+
+  handleCcNumber(ws, state, cb);
+}
+
+function getCcExp(ws, state, cb) {
+  state.state = 'cc';
+  state.msgs = [
+    "Credit Card Expiration Date"
+  , ""
+  , "You card information will be stored SECURE and encrypted with Stripe.com"
+  , "it WILL NOT BE SAVED on this computer or our servers"
+  ];
+  state.prompt = 'Expiration Date ';
+
+  handleCcExp(ws, state, cb);
+}
+
+function getCcCvc(ws, state, cb) {
+  state.state = 'cc';
+  state.msgs = [
+    "Credit Card Verification Number (CVC)"
+  , ""
+  , "You card information will be stored SECURE and encrypted with Stripe.com"
+  , "it WILL NOT BE SAVED on this computer or our servers"
+  ];
+  state.prompt = 'CVC ';
+
+  handleCcCvc(ws, state, cb);
+}
+
+function createCreditCard(ws, state, cb) {
+  getCcNumber(ws, state, function (err, num) {
+    getCcExp(ws, state, function (err, exp) {
+      getCcCvc(ws, state, function (err, cvc) {
+        cb(null, {
+          type: state.ccRule.abbr
+        , name: state.ccRule.name
+        , number: num
+        , cvc: cvc
+        , month: exp.substr(0, 2)
+        , year: '20' + exp.substr(2, 2)
+        });
+      });
+    });
+  });
+
 }
 
 function getSecret(ws, state, cb) {
@@ -737,9 +1087,29 @@ function getEcho(ws, state, cb) {
 
 function getCards(ws, state, cb) {
   state.card = true;
-  A3.requests.cards(state.oauth3, state.session).then(function (result) {
-    console.log(result);
-    cb(null);
+  A3.requests.cards(state.oauth3, state.session).then(function (results) {
+    console.log('CARDS');
+    console.log(results);
+    if (results.length) {
+      state.cards = results;
+      cb(null);
+      return results;
+    }
+
+    return createCreditCard(ws, state, function (err, card) {
+			console.log('got card:', card);
+			process.exit(1);
+		});
+/*
+Cards.create({
+      number: '4242424242424242'
+    , cvc: '111'
+    , month: '12'
+    , year: '2020'
+    , nick: 'coolaj86@gmail.com'
+    });
+    //A3.requests.saveCard();
+*/
   });
 }
 
@@ -957,6 +1327,12 @@ cli.parse({
 , totp: [ false, "base32-encoded 160-bit key to use for account creation (or false to disable)", 'string' ]
 , scope: [ false, "OAuth scope", 'string' ]
 , client: [ false, "OAuth client id (if different than provider url)", 'string' ]
+
+, 'cc': [ false, "Credit Card number (xxxx-xxxx-xxxx-xxxx)", 'string' ]
+, 'cc-exp': [ false, "Credit Card expiration (mm/yy)", 'string' ]
+, 'cc-cvv': [ false, "Credit Card Verification Code (xxx)", 'string' ]
+, 'cc-email': [ false, "Credit Card nickname (xxxxxx@xxxx.xxx)", 'string' ]
+, 'cc-nick': [ false, "Credit Card nickname (defaults to email)", 'string' ]
 });
 
 // ignore certonly and extraneous arguments
