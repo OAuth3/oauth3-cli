@@ -962,7 +962,11 @@ function createCreditCard(ws, state, cb) {
             , cvc: cvc
             }
           }).then(function (token) {
-            A.createCustomer(token);
+            return A3.requests.createCard(state.oauth3, state.session, {
+              service: 'stripe'
+            , email: email
+            , token: token
+            });
           }).then(function (result) {
             cb(null, result);
           }, function (err) {
@@ -1195,28 +1199,23 @@ function getEcho(ws, state, cb) {
 function getCards(ws, state, cb) {
   state.card = true;
   A3.requests.cards(state.oauth3, state.session).then(function (results) {
-    console.log('CARDS');
-    console.log(results);
+
     if (results.length) {
       state.cards = results;
       cb(null);
-      return results;
+      return;
     }
 
-    return createCreditCard(ws, state, function (err, card) {
-			console.log('got card:', card);
-			process.exit(1);
+    createCreditCard(ws, state, function (err, card) {
+      if (err || card.error) {
+        console.error(err || card);
+        process.exit(1);
+        return;
+      }
+
+      state.cards = [ card ];
+      cb(null);
 		});
-/*
-Cards.create({
-      number: '4242424242424242'
-    , cvc: '111'
-    , month: '12'
-    , year: '2020'
-    , nick: 'coolaj86@gmail.com'
-    });
-    //A3.requests.saveCard();
-*/
   });
 }
 
@@ -1356,7 +1355,7 @@ function doTheDo(ws, state) {
   else if (!state.echo) {
     getEcho(ws, state, loopit);
   }
-  else if (!state.card) {
+  else if (!state.cards) {
     getCards(ws, state, loopit);
   }
   else {
