@@ -1219,6 +1219,22 @@ function getCards(ws, state, cb) {
   });
 }
 
+function makePurchase(ws, state, cb) {
+  A3.requests.purchase(state.oauth3, state.session, {
+    amount: 1000
+  , currency: 'usd'
+  , description: 'Purchase example.com'
+  , cardId: state.cards[0].id
+  , customerId: state.cards[0].customer
+  , email: state.ccEmail || state.username
+  }).then(function (results) {
+    console.log('[make purchase result]');
+    console.log(results);
+    process.exit(1);
+    cb(null);
+  });
+}
+
 function getExistingSession(ws, state, cb) {
   A.session(state).then(function (session) {
     var now;
@@ -1357,6 +1373,9 @@ function doTheDo(ws, state) {
   }
   else if (!state.cards) {
     getCards(ws, state, loopit);
+  }
+  else if (!state.purchase) {
+    makePurchase(ws, state, loopit);
   }
   else {
     console.log("[oauth3-cli] complete / NOT IMPLEMENTED");
