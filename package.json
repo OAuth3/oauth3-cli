@@ -38,6 +38,7 @@
     "jsonwebtoken": "^5.5.4",
     "mkdirp": "^0.5.1",
     "qrcode-terminal": "git+https://github.com/gtanner/qrcode-terminal.git",
-    "request": "^2.69.0"
+    "request": "^2.69.0",
+    "stripe": "^4.4.0"
   }
 }

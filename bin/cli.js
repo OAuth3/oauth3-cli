@@ -9,6 +9,9 @@ var qrcode = require('qrcode-terminal');
 var A = require('../');
 var A3 = require('../lib/utils');
 var jwt = require('jsonwebtoken');
+//var stripe = require('./lib/stripe');
+var stripeId = 'pk_test_kSiUE4kP4c4ZdnkCjAwORASs';
+var stripe = require('stripe')(stripeId);
 
 var BKSP = String.fromCharCode(127);
 var ENTER = "\u0004";           // 13 // '\u001B[0m'
@@ -465,7 +468,7 @@ function formatCcExp(ws, state) {
     state.input = '0' + state.input;
   }
   month = parseInt(state.input.substr(0, 2), 10) || 0;
-  if (month < 1 || month > 11) {
+  if (month < 1 || month > 12) {
     state.input = state.input[0] || '';
   }
   state.input = state.input.substr(0, 4);
@@ -611,7 +614,7 @@ function handleInput(ws, state, cb) {
   stdin.setEncoding('utf8');
   stdin.resume();
 
-  state.input = '';
+  state.input = state.input || '';
   state.hint = '';
 
   reCompute(ws, state);
@@ -896,6 +899,9 @@ function getCcEmail(ws, state, cb) {
 }
 
 function getCcNumber(ws, state, cb) {
+  if (state.ccNumber) {
+    state.input = state.ccNumber.toString();
+  }
   state.state = 'cc';
   state.msgs = [
     "Credit Card Number"
@@ -910,6 +916,9 @@ function getCcNumber(ws, state, cb) {
 }
 
 function getCcExp(ws, state, cb) {
+  if (state.ccExp) {
+    state.input = state.ccExp.toString();
+  }
   state.state = 'cc';
   state.msgs = [
     "Credit Card Expiration Date"
@@ -923,6 +932,9 @@ function getCcExp(ws, state, cb) {
 }
 
 function getCcCvc(ws, state, cb) {
+  if (state.ccCvc) {
+    state.input = state.ccCvc.toString();
+  }
   state.state = 'cc';
   state.msgs = [
     "Credit Card Verification Number (CVC)"
@@ -942,6 +954,21 @@ function createCreditCard(ws, state, cb) {
       getCcCvc(ws, state, function (err, cvc) {
         state.unmask = true;
         getCcEmail(ws, state, function (err, email) {
+          stripe.tokens.create({
+            card: {
+              number: num
+            , exp_month: exp.substr(0, 2)
+            , exp_year: '20' + exp.substr(2, 2)
+            , cvc: cvc
+            }
+          }).then(function (token) {
+            A.createCustomer(token);
+          }).then(function (result) {
+            cb(null, result);
+          }, function (err) {
+            cb(err);
+          });
+          /*
           cb(null, {
             type: state.ccRule.abbr
           , name: state.ccRule.name
@@ -951,6 +978,7 @@ function createCreditCard(ws, state, cb) {
           , year: '20' + exp.substr(2, 2)
           , email: email
           });
+          */
         });
       });
     });
@@ -1378,6 +1406,9 @@ function main(options) {
   state.secret = options.secret;
   state.scope = options.scope;
   state.appId = options.client;
+  state.ccNumber = options['cc-number'];
+  state.ccExp = options['cc-exp'];
+  state.ccCvc = options['cc-cvc'];
 
   if ('false' === state.totpKey) {
     state.totpKey = false;
@@ -1409,9 +1440,9 @@ cli.parse({
 
 , 'cc-number': [ false, "Credit Card number (xxxx-xxxx-xxxx-xxxx)", 'string' ]
 , 'cc-exp': [ false, "Credit Card expiration (mm/yy)", 'string' ]
-, 'cc-cvv': [ false, "Credit Card Verification Code (xxx)", 'string' ]
-, 'cc-email': [ false, "Credit Card email (xxxxxx@xxxx.xxx)", 'string' ]
-, 'cc-nick': [ false, "Credit Card nickname (defaults to email)", 'string' ]
+, 'cc-cvc': [ false, "Credit Card Verification Code (xxx)", 'string' ]
+//, 'cc-email': [ false, "Credit Card email (xxxxxx@xxxx.xxx)", 'string' ]
+//, 'cc-nick': [ false, "Credit Card nickname (defaults to email)", 'string' ]
 });
 
 // ignore certonly and extraneous arguments
