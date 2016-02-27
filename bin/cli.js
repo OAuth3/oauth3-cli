@@ -1,5 +1,12 @@
 'use strict';
 
+// TODO preserve history
+// each time a selection is made it should be masked (if secret),
+// placed on the first line, the cursor should move to the end line,
+// and then a newline should be entered at the bottom to scroll the
+// top line up one and then the screen should be rewritten.
+// In this way the user should have a history of his / her actions.
+
 var PromiseA = require('bluebird');
 var path = require('path');
 var cli = require('cli');
@@ -189,6 +196,12 @@ function qr(ws, state) {
 }
 
 function reCompute(ws, state) {
+  var cols = ws.columns;
+  var rows = ws.rows;
+
+  state.width = cols;
+  state.height = rows;
+
   clearScreen(ws, state);
   // TODO check needed w x h
   if (!dollarBillCheck(ws, state)) {
@@ -441,6 +454,19 @@ function formatCcNumber(ws, state) {
   writePrompt(ws, state);
   ws.write(complete);
   ws.moveCursor(-1 * part.length, 0);
+}
+
+function tldAutocomplete(ws, state) {
+  state.input = state.hint;
+  ws.cursorTo(0);
+  writePrompt(ws, state);
+  ws.write(complete);
+  /*
+  ws.cursorTo(0);
+  writePrompt(ws, state);
+  ws.write(complete);
+  ws.moveCursor(-1 * part.length, 0);
+  */
 }
 
 function formatCcExp(ws, state) {
@@ -1196,6 +1222,92 @@ function getEcho(ws, state, cb) {
   });
 }
 
+function getDomainAvailability(state) {
+  var r = state.domainSearch;
+  var q = r.searchable;
+  var tld  = r.tld;
+  var sld = r.sld;
+
+  if (q && !state.dnSearchP[q]) {
+    state.dnSearchP[q] = A.searchDomains(sld, tld).then(function (dn) {
+      // TODO cache results
+      dn.updatedAt = Date.now();
+      if (!dn.available) {
+        dn.usd = 'Taken :-/';
+        dn.na = true;
+      }
+      state.dnSearch[q] = dn;
+
+      return dn;
+    });
+  }
+
+  return state.dnSearchP[q];
+}
+
+function searchDomain(ws, state, cb) {
+  var tld = state.tld && ('.' + state.tld) || '';
+  if (state.sld) {
+    state.input = state.sld + tld;
+  }
+  state.state = 'domain';
+  state.msgs = [
+    "Search for an Available Domain"
+  , ""
+  , "Cheap domains (under $15):"
+  , "    .abc .biz .click .com .info .link" // me, us non-private
+	, "    .name .one .org .rocks .work .xyz"
+  , ""
+  , "Other cool domains (under $25):"
+  , "    .band .blue .cloud .club .dance .earth .family"
+	, "    .live .network .ninja .pink .pro .red .studio .today"
+  ];
+  state.prompt = 'Search Domains: ';
+  //state.prompt = 'American Express ';
+
+  state.dnSearch = state.dnSearch || {};
+  state.dnSearchP = state.dnSearchP || {};
+	state.inputCallback = function (ws, state) {
+    var r = state.domainSearch = require('../lib/tld-hints').format(state);
+
+    getDomainAvailability(state);
+
+    ws.cursorTo(0);
+    writePrompt(ws, state);
+    ws.write(r.complete);
+    ws.moveCursor(-1 * r.hintlen, 0);
+  };
+
+  handleInput(ws, state, function (err/*, result*/) {
+		state.inputCallback = null;
+    if (err) {
+      cb(err);
+      return;
+    }
+
+    getDomainAvailability(state).then(function (dn) {
+      console.log(dn);
+      process.exit(1);
+      if (dn.na) {
+        searchDomain(ws, state, cb);
+        return;
+      }
+
+      cb(null, dn);
+    }, cb);
+  });
+
+  // pre-fill suggestion
+	state.inputCallback(ws, state);
+}
+
+function addDomainsToCart(ws, state, cb) {
+  searchDomain(ws, state, function (err, domain) {
+    console.log('[oauth3-cli] domain:', domain);
+    process.exit(1);
+  });
+}
+
 function getCards(ws, state, cb) {
   state.card = true;
   A3.requests.cards(state.oauth3, state.session).then(function (results) {
@@ -1371,6 +1483,9 @@ function doTheDo(ws, state) {
   else if (!state.echo) {
     getEcho(ws, state, loopit);
   }
+  else if (!(state.domains && state.domains.length)) {
+    addDomainsToCart(ws, state, loopit);
+  }
   else if (!state.cards) {
     getCards(ws, state, loopit);
   }
@@ -1455,6 +1570,8 @@ cli.parse({
 , totp: [ false, "base32-encoded 160-bit key to use for account creation (or false to disable)", 'string' ]
 , scope: [ false, "OAuth scope", 'string' ]
 , client: [ false, "OAuth client id (if different than provider url)", 'string' ]
+
+, domains: [ false, "Comma-separated list of domains to purchase", 'string' ]
 
 , 'cc-number': [ false, "Credit Card number (xxxx-xxxx-xxxx-xxxx)", 'string' ]
 , 'cc-exp': [ false, "Credit Card expiration (mm/yy)", 'string' ]
