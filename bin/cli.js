@@ -1229,9 +1229,14 @@ function getDomainAvailability(state) {
   var sld = r.sld;
 
   if (q && !state.dnSearchP[q]) {
-    state.dnSearchP[q] = A.searchDomains(sld, tld).then(function (dn) {
+    state.dnSearchP[q] = A.searchDomains(sld, tld).then(function (dns) {
+      var dn = dns[0];
       // TODO cache results
+      dn.tld = tld;
+      dn.sld = sld;
       dn.updatedAt = Date.now();
+      //console.log(dn);
+      //process.exit(1);
       if (!dn.available) {
         dn.usd = 'Taken :-/';
         dn.na = true;
@@ -1270,7 +1275,15 @@ function searchDomain(ws, state, cb) {
 	state.inputCallback = function (ws, state) {
     var r = state.domainSearch = require('../lib/tld-hints').format(state);
 
-    getDomainAvailability(state);
+    if (r.searchable && !state.dnSearch[r.searchable]) {
+      getDomainAvailability(state).then(function () {
+        if ('domain' === state.state
+          && r.searchable === state.domainSearch.searchable
+        ) {
+          state.inputCallback(ws, state);
+        }
+      });
+    }
 
     ws.cursorTo(0);
     writePrompt(ws, state);
