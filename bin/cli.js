@@ -667,6 +667,7 @@ function handleInput(ws, state, cb) {
     case "\n":
     case "\r":
     case ENTER:
+        // TODO pause on enter, check validity via verify, then unpause or close and callback
         if (state.hint) {
           state.input += state.hint.slice(state.input.length);
         }
@@ -1228,26 +1229,94 @@ function getDomainAvailability(state) {
   var tld  = r.tld;
   var sld = r.sld;
 
-  if (q && !state.dnSearchP[q]) {
-    state.dnSearchP[q] = A.searchDomains(sld, tld).then(function (dns) {
-      var dn = dns[0];
-      // TODO cache results
-      dn.tld = tld;
-      dn.sld = sld;
-      dn.updatedAt = Date.now();
-      //console.log(dn);
-      //process.exit(1);
-      if (!dn.available) {
-        dn.usd = 'Taken :-/';
-        dn.na = true;
-      }
-      state.dnSearch[q] = dn;
-
-      return dn;
-    });
+  if (!q) {
+    return PromiseA.reject(new Error("don't submit non-domains please"));
   }
 
+  if (state.dnSearchP[q]) {
+    return state.dnSearchP[q];
+  }
+
+  state.dnSearchP[q] = A.searchDomains(sld, tld).then(function (dns) {
+    var dn = dns[0];
+
+    dn.usd = '$' + Math.round(dn.amount / 100); //.toFixed(2);
+    // TODO cache results
+    dn.tld = tld;
+    dn.sld = sld;
+    dn.updatedAt = Date.now();
+    //console.log(dn);
+    //process.exit(1);
+    if (!dn.available) {
+      dn.usd = 'N/A';
+      dn.na = true;
+    }
+    state.dnSearch[q] = dn;
+
+    return dn;
+  }, function (err) {
+    var dn = {};
+    // TODO cache results
+    dn.available = false;
+    dn.tld = tld;
+    dn.sld = sld;
+    dn.updatedAt = Date.now();
+    dn.usd = 'ERR';
+    dn.na = true;
+    dn.error = err;
+    state.dnSearch[q] = dn;
+
+    return dn;
+  });
+
   return state.dnSearchP[q];
+}
+
+function showCart(state) {
+  if (!Array.isArray(state.domains) || !state.domains.length) {
+    return;
+  }
+
+  state.msgs.push("Domains in your cart:");
+  state.msgs.push("    " + state.domains.map(function (domain) {
+    if (domain.na) {
+      return colors.red(domain.sld + '.' + domain.tld + ' ' + domain.usd);
+    } else {
+      return colors.cyan(domain.sld + '.' + domain.tld + ' ' + domain.usd);
+    }
+  }).join(', '));
+  state.msgs.push("");
+  state.msgs.push("Total: $" + state.domains.reduce(function (price, domain) {
+    if (domain.available) {
+      return price + parseFloat(domain.usd.slice(1), 10);
+    }
+    return price;
+  }, 0));
+}
+
+function nextDomain(ws, state, cb) {
+  state.state = 'nextdomain';
+  state.hints = [ 'yes', 'no' ];
+  state.msgs = [];
+  showCart(state);
+  state.msgs.push("");
+  state.msgs.push("Continue Shopping?");
+  state.prompt = "Add another domain to cart? [y/N]: ";
+
+  handleInput(ws, state, function (err, result) {
+    if (/^\s*y/i.test(result)) {
+      searchDomain(ws, state, cb);
+      return;
+    }
+    if (/^\s*n/i.test(result)) {
+      state.checkoutReady = true;
+      cb(null, null);
+      return;
+    }
+
+    nextDomain(ws, state, cb);
+    return;
+  });
 }
 
 function searchDomain(ws, state, cb) {
@@ -1266,13 +1335,16 @@ function searchDomain(ws, state, cb) {
   , "Other cool domains (under $25):"
   , "    .band .blue .cloud .club .dance .earth .family"
 	, "    .live .network .ninja .pink .pro .red .studio .today"
+  , ""
   ];
+  showCart(state);
   state.prompt = 'Search Domains: ';
   //state.prompt = 'American Express ';
 
+  state.domains = state.domains || [];
   state.dnSearch = state.dnSearch || {};
   state.dnSearchP = state.dnSearchP || {};
-	state.inputCallback = function (ws, state) {
+	state.inputCallback = function inputCallback(ws, state) {
     var r = state.domainSearch = require('../lib/tld-hints').format(state);
 
     if (r.searchable && !state.dnSearch[r.searchable]) {
@@ -1280,7 +1352,11 @@ function searchDomain(ws, state, cb) {
         if ('domain' === state.state
           && r.searchable === state.domainSearch.searchable
         ) {
-          state.inputCallback(ws, state);
+          if (inputCallback === state.inputCallback) {
+            state.inputCallback(ws, state);
+          } else {
+            require('../lib/tld-hints').format(state);
+          }
         }
       });
     }
@@ -1288,25 +1364,42 @@ function searchDomain(ws, state, cb) {
     ws.cursorTo(0);
     writePrompt(ws, state);
     ws.write(r.complete);
-    ws.moveCursor(-1 * r.hintlen, 0);
+    //ws.moveCursor(-1 * r.hintlen, 0);
+    ws.cursorTo(state.prompt.length + state.input.length);
   };
 
-  handleInput(ws, state, function (err/*, result*/) {
+  handleInput(ws, state, function (err, result) {
 		state.inputCallback = null;
     if (err) {
       cb(err);
       return;
     }
 
-    getDomainAvailability(state).then(function (dn) {
-      console.log(dn);
-      process.exit(1);
-      if (dn.na) {
+    function retry() {
+      if (0 === state.domains.filter(function (domain) {
+        return domain.available;
+      }).length) {
         searchDomain(ws, state, cb);
         return;
       }
 
-      cb(null, dn);
+      nextDomain(ws, state, cb);
+    }
+
+    var r = require('../lib/tld-hints').format({
+      dnSearch: state.dnSearch
+    , input: result
+    });
+
+    // TODO reject bad non-empty input from being ENTER-able
+    if (!r.searchable) {
+      retry();
+      return;
+    }
+
+    getDomainAvailability(state).then(function (dn) {
+      state.domains.push(dn);
+      retry();
     }, cb);
   });
 
@@ -1496,7 +1589,7 @@ function doTheDo(ws, state) {
   else if (!state.echo) {
     getEcho(ws, state, loopit);
   }
-  else if (!(state.domains && state.domains.length)) {
+  else if (!state.checkoutReady) {
     addDomainsToCart(ws, state, loopit);
   }
   else if (!state.cards) {
@@ -1596,4 +1689,10 @@ cli.parse({
 // ignore certonly and extraneous arguments
 cli.main(function(_, options) {
   main(options);
+});
+
+process.on('unhandledRejection', function(reason, p){
+  console.log("Possibly Unhandled Rejection at: Promise ", p, " reason: ", reason);
+  process.exit(1);
+  // application specific logging here
 });
