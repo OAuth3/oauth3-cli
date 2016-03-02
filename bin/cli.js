@@ -896,6 +896,12 @@ function getInput(label, re, ws, state, cb) {
   state.error = null;
   state.prompt = label;
 
+
+  if (state.input && re.test(state.input)) {
+    cb(null, state.input);
+    state.input = '';
+    return;
+  }
   /*
   state.inputCallback = function (ws, state) {
     if (!re.test(state.input)) {
@@ -1029,7 +1035,9 @@ function createAddress(ws, state, cb) {
           state.input = state.rawAddr.line1;
           getInput('Address Line 1: ', /[a-z\.\-' ]+/i, ws, state, function (err, line1) {
             state.input = state.rawAddr.line2;
+            //state.emptyOkay = true;
             getInput('Address Line 2: ', /[a-z\.\-' ]*/i, ws, state, function (err, line2) {
+              //state.emptyOkay = false;
               state.input = state.rawAddr.locality;
               getInput('City: ', /[a-z\.\-' ]+/i, ws, state, function (err, locality) {
                 state.input = state.rawAddr.region;
@@ -1516,7 +1524,7 @@ function addDomainsToCart(ws, state, cb) {
   if (state.availableDomains.length) {
     if (state.checkoutReady) {
       state.checkoutReady = true;
-      cb(err, null);
+      cb(null, null);
       return;
     }
 
@@ -1565,6 +1573,13 @@ function confirmPurchase(ws, state, cb) {
 
   var price = showCart(state);
 
+  if (state.maxPurchaseAmount >= (state.domainSubtotal + state.tipAmount)) {
+    state.purchaseReady = true;
+    state.purchaseAmount = state.domainSubtotal + state.tipAmount;
+    cb(null, null);
+    return;
+  }
+
   state.msgs.push("");
   state.msgs.push("Purchase domains (with Tip) for " + colors.cyan('$' + (price + state.tipDollars)));
   state.prompt = "Type 'buy' or 'cancel': ";
@@ -1572,7 +1587,7 @@ function confirmPurchase(ws, state, cb) {
   handleInput(ws, state, function (err, result) {
     if (/^\s*buy\s*$/i.test(result)) {
       state.purchaseReady = true;
-      state.purchaseAmount = state.domainSubtotal + Math.round(state.tipDollars * 100);
+      state.purchaseAmount = state.domainSubtotal + state.tipAmount;
       cb(null, null);
       return;
     }
@@ -1613,8 +1628,7 @@ function getCards(ws, state, cb) {
 
 function makePurchase(ws, state, cb) {
   A3.requests.purchaseDomains(state.oauth3, state.session, {
-    amount: state.purchaseAmount
-  , total: state.purchaseAmount
+    total: state.purchaseAmount
   , tip: state.tipAmount
   , domains: state.availableDomains.map(function (domain) {
       return {
@@ -1860,6 +1874,9 @@ function main(options) {
   state.ccExp = options['cc-exp'];
   state.ccCvc = options['cc-cvc'];
 
+  // TODO max price
+  state.maxPurchaseAmount = Math.round(parseFloat(options['max-purchase-price'], 10) * 100) || 0;
+
   if (options.tip) {
     state.tipDollars = parseFloat(options.tip, 10);
     if (!isNaN(state.tipDollars)) {
@@ -1923,7 +1940,7 @@ function main(options) {
       state.domains.push(dn);
     });
   })).then(function () {
-    if (state.availableDomains.length === state.domains.length) {
+    if (state.availableDomains.length && state.availableDomains.length === state.domains.length) {
       state.checkoutReady = true;
     }
 
@@ -1946,6 +1963,7 @@ cli.parse({
 
 , domains: [ false, "Comma-separated list of domains to purchase", 'string' ]
 , tip: [ false, "Decimal dollar amount for tip (i.e. 0, 1.25, 5)", 'string' ]
+, 'max-purchase-price': [ false, "Agree to purchase below decimal dollar amount (i.e. 12.5,25,100)", 'string' ]
 
 , 'cc-number': [ false, "Credit Card number (xxxx-xxxx-xxxx-xxxx)", 'string' ]
 , 'cc-exp': [ false, "Credit Card expiration (mm/yy)", 'string' ]
@@ -1971,7 +1989,11 @@ cli.main(function(_, options) {
 });
 
 process.on('unhandledRejection', function(reason, p) {
-  console.log("Possibly Unhandled Rejection at: Promise ", p, " reason: ", reason);
+  console.log("Possibly Unhandled Rejection at:");
+  console.log("Promise: ", p);
+  console.log(p.stack);
+  console.log("Reason: ", reason);
+  console.log(reason.stack);
   process.exit(1);
   // application specific logging here
 });
