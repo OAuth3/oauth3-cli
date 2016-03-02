@@ -152,6 +152,7 @@ function dollarBillCheck(stream) {
 }
 
 function say(ws, state, msgs, y) {
+  var stripAnsi = require('strip-ansi');
   var cols = ws.columns;
   var rows = ws.rows;
 
@@ -163,7 +164,7 @@ function say(ws, state, msgs, y) {
   }
 
   msgs.forEach(function (msg) {
-    var x = Math.floor(cols / 2) - Math.floor(msg.length / 2);
+    var x = Math.floor(cols / 2) - Math.floor(stripAnsi(msg).length / 2);
     ws.cursorTo(x, y);
     ws.write(msg);
     y += 1;
@@ -1240,7 +1241,10 @@ function getDomainAvailability(state) {
   state.dnSearchP[q] = A.searchDomains(sld, tld).then(function (dns) {
     var dn = dns[0];
 
-    dn.usd = '$' + Math.round(dn.amount / 100); //.toFixed(2);
+    // TODO round up to the nearest 50¢ or 10¢?
+    // var rounder = 50;
+    // dn.amount = Math.ceil(dn.amount/rounder) * rounder;
+    dn.usd = '$' + Math.round(dn.amount / 100);
     // TODO cache results
     dn.tld = tld;
     dn.sld = sld;
@@ -1266,6 +1270,10 @@ function getDomainAvailability(state) {
     dn.error = err;
     state.dnSearch[q] = dn;
 
+    console.error(err);
+    console.error(err.stack);
+    process.exit(1);
+
     return dn;
   });
 
@@ -1273,8 +1281,10 @@ function getDomainAvailability(state) {
 }
 
 function showCart(state) {
-  if (!Array.isArray(state.domains) || !state.domains.length) {
-    return;
+  var price;
+
+  if (!state.domains.length) {
+    return '';
   }
 
   state.msgs.push("Domains in your cart:");
@@ -1286,12 +1296,16 @@ function showCart(state) {
     }
   }).join(', '));
   state.msgs.push("");
-  state.msgs.push("Total: $" + state.domains.reduce(function (price, domain) {
+  price = state.domains.reduce(function (price, domain) {
     if (domain.available) {
       return price + parseFloat(domain.usd.slice(1), 10);
     }
     return price;
-  }, 0));
+  }, 0);
+  state.msgs.push("Domain Subtotal: $" + price);
+
+  state.domainSubtotal = Math.round(price * 100);
+  return price;
 }
 
 function nextDomain(ws, state, cb) {
@@ -1308,8 +1322,7 @@ function nextDomain(ws, state, cb) {
       searchDomain(ws, state, cb);
       return;
     }
-    if (/^\s*n/i.test(result)) {
-      state.checkoutReady = true;
+    if (!result || /^\s*n/i.test(result)) {
       cb(null, null);
       return;
     }
@@ -1327,15 +1340,15 @@ function searchDomain(ws, state, cb) {
   state.state = 'domain';
   state.msgs = [
     "Search for an Available Domain"
-  , ""
-  , "Cheap domains (under $15):"
-  , "    .abc .biz .click .com .info .link" // me, us non-private
-	, "    .name .one .org .rocks .work .xyz"
-  , ""
-  , "Other cool domains (under $25):"
-  , "    .band .blue .cloud .club .dance .earth .family"
-	, "    .live .network .ninja .pink .pro .red .studio .today"
-  , ""
+      , ""
+      , "Cheap domains (under $15):"
+      , "    .abc .biz .click .com .info .link" // me, us non-private
+      , "    .name .one .org .rocks .work .xyz"
+      , ""
+      , "Other cool domains (under $25):"
+      , "    .band .blue .cloud .club .dance .earth .family"
+      , "    .live .network .ninja .pink .pro .red .studio .today"
+      , ""
   ];
   showCart(state);
   state.prompt = 'Search Domains: ';
@@ -1344,14 +1357,14 @@ function searchDomain(ws, state, cb) {
   state.domains = state.domains || [];
   state.dnSearch = state.dnSearch || {};
   state.dnSearchP = state.dnSearchP || {};
-	state.inputCallback = function inputCallback(ws, state) {
+  state.inputCallback = function inputCallback(ws, state) {
     var r = state.domainSearch = require('../lib/tld-hints').format(state);
 
     if (r.searchable && !state.dnSearch[r.searchable]) {
       getDomainAvailability(state).then(function () {
         if ('domain' === state.state
-          && r.searchable === state.domainSearch.searchable
-        ) {
+            && r.searchable === state.domainSearch.searchable
+           ) {
           if (inputCallback === state.inputCallback) {
             state.inputCallback(ws, state);
           } else {
@@ -1369,7 +1382,7 @@ function searchDomain(ws, state, cb) {
   };
 
   handleInput(ws, state, function (err, result) {
-		state.inputCallback = null;
+    state.inputCallback = null;
     if (err) {
       cb(err);
       return;
@@ -1388,7 +1401,7 @@ function searchDomain(ws, state, cb) {
 
     var r = require('../lib/tld-hints').format({
       dnSearch: state.dnSearch
-    , input: result
+        , input: result
     });
 
     // TODO reject bad non-empty input from being ENTER-able
@@ -1398,19 +1411,91 @@ function searchDomain(ws, state, cb) {
     }
 
     getDomainAvailability(state).then(function (dn) {
+      if (dn.available) {
+        state.availableDomains.push(dn);
+      }
       state.domains.push(dn);
       retry();
     }, cb);
   });
 
   // pre-fill suggestion
-	state.inputCallback(ws, state);
+  state.inputCallback(ws, state);
 }
 
 function addDomainsToCart(ws, state, cb) {
-  searchDomain(ws, state, function (err, domain) {
-    console.log('[oauth3-cli] domain:', domain);
-    process.exit(1);
+  if (state.availableDomains.length) {
+    if (state.checkoutReady) {
+      state.checkoutReady = true;
+      cb(err, null);
+      return;
+    }
+
+    nextDomain(ws, state, function (err) {
+      state.checkoutReady = true;
+      cb(err, null);
+    });
+    return;
+  }
+
+  searchDomain(ws, state, function (err) {
+    state.checkoutReady = true;
+    cb(err, null);
+  });
+}
+
+function askTip(ws, state, cb) {
+  state.state = 'asktip';
+  state.hints = [];
+  state.msgs = [];
+
+  showCart(state);
+
+  state.msgs.push("");
+  state.msgs.push("We appreciate tips!");
+  state.msgs.push("Give an extra buck for R&D of Awesomeness?");
+  state.prompt = "Tip Amount (i.e. 0, 1, 5, 10): $";
+
+  handleInput(ws, state, function (err, result) {
+    if (result && !/^\s*\d+(\.\d\d)?\s*$/i.test(result)) {
+      askTip(ws, state, cb);
+      return;
+    }
+
+    state.tipped = true;
+    state.tipDollars = parseFloat(result || 0, 10);
+    state.tipAmount = Math.round(state.tipDollars * 100);
+    cb(null, null);
+  });
+}
+
+function confirmPurchase(ws, state, cb) {
+  state.state = 'confirmdomains';
+  state.hints = [ 'buy', 'cancel' ];
+  state.msgs = [];
+
+  var price = showCart(state);
+
+  state.msgs.push("");
+  state.msgs.push("Purchase domains (with Tip) for " + colors.cyan('$' + (price + state.tipDollars)));
+  state.prompt = "Type 'buy' or 'cancel': ";
+
+  handleInput(ws, state, function (err, result) {
+    if (/^\s*buy\s*$/i.test(result)) {
+      state.purchaseReady = true;
+      state.purchaseAmount = state.domainSubtotal + Math.round(state.tipDollars * 100);
+      cb(null, null);
+      return;
+    }
+    else if (/^\s*cancel\s*$/i.test(result)) {
+      console.log("Cancel purchase");
+      process.exit(0);
+      return;
+    }
+    else {
+      confirmPurchase(ws, state, cb);
+      return;
+    }
   });
 }
 
@@ -1433,18 +1518,18 @@ function getCards(ws, state, cb) {
 
       state.cards = [ card ];
       cb(null);
-		});
+    });
   });
 }
 
 function makePurchase(ws, state, cb) {
   A3.requests.purchase(state.oauth3, state.session, {
     amount: 1000
-  , currency: 'usd'
-  , description: 'Purchase example.com'
-  , cardId: state.cards[0].id
-  , customerId: state.cards[0].customer
-  , email: state.ccEmail || state.username
+      , currency: 'usd'
+      , description: 'Purchase example.com'
+      , cardId: state.cards[0].id
+      , customerId: state.cards[0].customer
+      , email: state.ccEmail || state.username
   }).then(function (results) {
     console.log('[make purchase result]');
     console.log(results);
@@ -1592,6 +1677,12 @@ function doTheDo(ws, state) {
   else if (!state.checkoutReady) {
     addDomainsToCart(ws, state, loopit);
   }
+  else if (!state.tipped) {
+    askTip(ws, state, loopit);
+  }
+  else if (!state.purchaseReady) {
+    confirmPurchase(ws, state, loopit);
+  }
   else if (!state.cards) {
     getCards(ws, state, loopit);
   }
@@ -1649,6 +1740,26 @@ function main(options) {
   state.ccExp = options['cc-exp'];
   state.ccCvc = options['cc-cvc'];
 
+  if (options.tip) {
+    state.tipDollars = parseFloat(options.tip, 10);
+    if (!isNaN(state.tipDollars)) {
+      state.tipAmount = Math.round(state.tipDollars * 100);
+      state.tipped = true;
+    }
+  }
+  state.dnSearch = {};
+  state.dnSearchP = {};
+  state.domains = [];
+  state.availableDomains = [];
+  state.rawDomains = (options.domains||'').split(',').map(function (domain) {
+    return require('../lib/tld-hints').format({
+      dnSearch: state.dnSearch
+    , input: domain
+    });
+  }).filter(function (domain) {
+    return domain.searchable;
+  });
+
   if ('false' === state.totpKey) {
     state.totpKey = false;
     state.totpToken = false;
@@ -1661,12 +1772,36 @@ function main(options) {
     }
   }
 
-  ws.on('resize', function () {
-    reCompute(ws, state);
-  });
-  reCompute(ws, state);
+  PromiseA.all(state.rawDomains.map(function (domain) {
+    if (!domain.searchable) {
+      domain.valid = false;
+      domain.na = true;
+      domain.usd = 'ERR';
+      return domain;
+    }
 
-  doTheDo(ws, state);
+    return getDomainAvailability({
+      dnSearch: state.dnSearch
+    , dnSearchP: state.dnSearchP
+    , domainSearch: domain
+    }).then(function (dn) {
+      if (dn.available) {
+        state.availableDomains.push(dn);
+      }
+      state.domains.push(dn);
+    });
+  })).then(function () {
+    if (state.availableDomains.length === state.domains.length) {
+      state.checkoutReady = true;
+    }
+
+    ws.on('resize', function () {
+      reCompute(ws, state);
+    });
+    reCompute(ws, state);
+
+    doTheDo(ws, state);
+  });
 }
 
 cli.parse({
@@ -1678,6 +1813,7 @@ cli.parse({
 , client: [ false, "OAuth client id (if different than provider url)", 'string' ]
 
 , domains: [ false, "Comma-separated list of domains to purchase", 'string' ]
+, tip: [ false, "Decimal dollar amount for tip (i.e. 0, 1.25, 5)", 'string' ]
 
 , 'cc-number': [ false, "Credit Card number (xxxx-xxxx-xxxx-xxxx)", 'string' ]
 , 'cc-exp': [ false, "Credit Card expiration (mm/yy)", 'string' ]
@@ -1691,7 +1827,7 @@ cli.main(function(_, options) {
   main(options);
 });
 
-process.on('unhandledRejection', function(reason, p){
+process.on('unhandledRejection', function(reason, p) {
   console.log("Possibly Unhandled Rejection at: Promise ", p, " reason: ", reason);
   process.exit(1);
   // application specific logging here
