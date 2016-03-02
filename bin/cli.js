@@ -890,6 +890,31 @@ function createSecret(ws, state, cb) {
   });
 }
 
+function getInput(label, re, ws, state, cb) {
+  state.state = 'input';
+  //state.msgs = msgs;
+  state.error = null;
+  state.prompt = label;
+
+  /*
+  state.inputCallback = function (ws, state) {
+    if (!re.test(state.input)) {
+      state.input = state.input.slice(0, state.input.length - 1);
+    }
+  };
+  */
+  handleInput(ws, state, function (err, result) {
+    //state.inputCallback = null;
+    if (!re.test(result)) {
+      return getInput(label, re, ws, state, cb);
+    }
+
+    cb(err, result);
+  });
+
+  search(ws, state);
+}
+
 function getCcEmail(ws, state, cb) {
   state.state = 'email';
   state.autohint = true;
@@ -975,6 +1000,71 @@ function getCcCvc(ws, state, cb) {
   handleCcCvc(ws, state, cb);
 }
 
+function createAddress(ws, state, cb) {
+  var msgs = [
+    "The domain registry requires contact information."
+  , ""
+  , "This information will be made public in the international domain registry."
+  , "This means that you will get spam snail mail (not from us) and also"
+  , "phone calls from people (again, not us) in India claiming to be from Google - but they aren't."
+  , ""
+  , "For many domains it's okay to put an alternate address and phone number,"
+  , "but YOUR EMAIL IS REQUIRED for various validations."
+  , ""
+  , "WARNING: Some domains, such as .me and .us, will cancel your registration"
+  , "without refund if your mailing address is non-deliverable or not verifiable."
+  ];
+  state.msgs = msgs;
+  state.input = state.rawAddr.firstName;
+  getInput('First Name: ', /[A-Z][A-Za-z\.\-' ]*/, ws, state, function (err, first) {
+    state.input = state.rawAddr.lastName;
+    getInput('Last Name: ', /[A-Z][A-Za-z\.\-' ]*/, ws, state, function (err, last) {
+      state.input = state.rawAddr.phone;
+      getInput('Phone: ', /[\+0-9\.\-]+/, ws, state, function (err, phone) {
+        state.autohint = true;
+        state.hints = (state.username || state.email) && [state.email || state.username];
+        state.input = state.rawAddr.email;
+        getInput('Email: ', /[^\@]+@[^\.]+\.[^\.]+/, ws, state, function (err, email) {
+          state.autohint = false;
+          state.input = state.rawAddr.line1;
+          getInput('Address Line 1: ', /[a-z\.\-' ]+/i, ws, state, function (err, line1) {
+            state.input = state.rawAddr.line2;
+            getInput('Address Line 2: ', /[a-z\.\-' ]*/i, ws, state, function (err, line2) {
+              state.input = state.rawAddr.locality;
+              getInput('City: ', /[a-z\.\-' ]+/i, ws, state, function (err, locality) {
+                state.input = state.rawAddr.region;
+                getInput('State: ', /[a-z\.\-' ]+/i, ws, state, function (err, region) {
+                  state.input = state.rawAddr.postalCode;
+                  getInput('Zip: ', /[0-9a-z\.\-' ]+/i, ws, state, function (err, postalCode) {
+                    state.input = state.rawAddr.countryCode;
+                    getInput('2-Digit Country Code: ', /[A-Z]{0,3}/i, ws, state, function (err, countryCode) {
+                      state.address = {
+                        firstName: first
+                      , lastName: last
+                      , email: email
+                      , phone: phone
+                      , line1: line1
+                      , line2: line2
+                      , locality: locality
+                      , region: region
+                      , postalCode: postalCode
+                      , country: countryCode
+                      , countryCode: countryCode
+                      };
+
+                      cb(null, state.address);
+                    });
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+}
+
 function createCreditCard(ws, state, cb) {
   state.unmask = true;
   getCcNumber(ws, state, function (err, num) {
@@ -1015,7 +1105,6 @@ function createCreditCard(ws, state, cb) {
       });
     });
   });
-
 }
 
 function getSecret(ws, state, cb) {
@@ -1523,19 +1612,47 @@ function getCards(ws, state, cb) {
 }
 
 function makePurchase(ws, state, cb) {
+  A3.requests.purchaseDomains(state.oauth3, state.session, {
+    amount: state.purchaseAmount
+  , total: state.purchaseAmount
+  , tip: state.tipAmount
+  , domains: state.availableDomains.map(function (domain) {
+      return {
+        sld: domain.sld
+      , tld: domain.tld
+      , amount: Math.round(domain.usd.slice(1) * 100)
+      };
+    })
+  , currency: 'usd'
+  , description: 'Purchase ' + state.availableDomains.length + ' domain(s).'
+  , cardId: state.cards[0].id
+  , customerId: state.cards[0].customer
+  , email: state.ccEmail || state.username
+  , addr: state.address
+  }).then(function (results) {
+    console.log('[make purchase result]');
+    console.log(results);
+    console.log("You paid $xx.x. We paid $xx.xx.");
+    console.log("About $x.x will go to overhead costs and modest salaries.");
+    console.log("$x.xx is fueling the future! Yay!");
+    process.exit(1);
+    cb(null);
+  });
+  /*
   A3.requests.purchase(state.oauth3, state.session, {
-    amount: 1000
-      , currency: 'usd'
-      , description: 'Purchase example.com'
-      , cardId: state.cards[0].id
-      , customerId: state.cards[0].customer
-      , email: state.ccEmail || state.username
+    amount: state.purchaseAmount
+  , currency: 'usd'
+  , description: 'Purchase example.com'
+  , cardId: state.cards[0].id
+  , customerId: state.cards[0].customer
+  , email: state.ccEmail || state.username
   }).then(function (results) {
     console.log('[make purchase result]');
     console.log(results);
     process.exit(1);
     cb(null);
   });
+   */
 }
 
 function getExistingSession(ws, state, cb) {
@@ -1686,6 +1803,9 @@ function doTheDo(ws, state) {
   else if (!state.cards) {
     getCards(ws, state, loopit);
   }
+  else if (!state.address) {
+    createAddress(ws, state, loopit);
+  }
   else if (!state.purchase) {
     makePurchase(ws, state, loopit);
   }
@@ -1747,6 +1867,18 @@ function main(options) {
       state.tipped = true;
     }
   }
+  state.rawAddr = {};
+  state.rawAddr.firstName = (options['first-name'] || '').toString();
+  state.rawAddr.lastName = (options['last-name'] || '').toString();
+  state.rawAddr.email = (options.email || '').toString();
+  state.rawAddr.phone = (options.phone || '').toString();
+  state.rawAddr.line1 = (options.line1 || '').toString();
+  state.rawAddr.line2 = (options.line2 || '').toString();
+  state.rawAddr.locality = (options.locality || '').toString();
+  state.rawAddr.region = (options.region || '').toString();
+  state.rawAddr.postalCode = (options['postal-code'] || '').toString();
+  state.rawAddr.countryCode = (options['country-code'] || '').toString();
+
   state.dnSearch = {};
   state.dnSearchP = {};
   state.domains = [];
@@ -1820,6 +1952,17 @@ cli.parse({
 , 'cc-cvc': [ false, "Credit Card Verification Code (xxx)", 'string' ]
 //, 'cc-email': [ false, "Credit Card email (xxxxxx@xxxx.xxx)", 'string' ]
 //, 'cc-nick': [ false, "Credit Card nickname (defaults to email)", 'string' ]
+
+, 'first-name': [ false, "(Domain Registration) First Name", 'string' ]
+, 'last-name': [ false, "(Domain Registration) Last Name", 'string' ]
+, 'phone': [ false, "(Domain Registration) Phone", 'string' ]
+, 'email': [ false, "(Domain Registration) Email", 'string' ]
+, 'line1': [ false, "(Domain Registration) Street Address", 'string' ]
+, 'line2': [ false, "(Domain Registration) Extended Address", 'string' ]
+, 'locality': [ false, "(Domain Registration) Locality (City)", 'string' ]
+, 'region': [ false, "(Domain Registration) Region (State/Province)", 'string' ]
+, 'postal-code': [ false, "(Domain Registration) Postal Code (Zip)", 'string' ]
+, 'country-code': [ false, "(Domain Registration) 2-digit Country Code", 'string' ]
 });
 
 // ignore certonly and extraneous arguments
