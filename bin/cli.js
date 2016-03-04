@@ -1316,7 +1316,8 @@ function getAccount(ws, state, cb) {
 function getEcho(ws, state, cb) {
   state.echo = true;
   A3.requests.echo(state.oauth3, state.session).then(function (result) {
-    console.log(result);
+    //console.log('ECHO result');
+    //console.log(result);
     cb(null);
   });
 }
@@ -1805,7 +1806,56 @@ function doTheDo(ws, state) {
   else if (!state.echo) {
     getEcho(ws, state, loopit);
   }
-  else if (!state.checkoutReady) {
+  else {
+    if (state.getDomain) {
+      getDomain();
+    }
+    else {
+      getMyDomains(ws, state);
+    }
+  }
+}
+
+function getPurchasedDomains(ws, state) {
+  A3.requests.domains(state.oauth3, state.session).then(function (regs) {
+    console.log(regs);
+    state.purchasedDomains = regs.registrations;
+  }).then(function () {
+    var opts = { sub: '', sld: 'coolaj85', tld: 'com', device: 'brunchfast.local' };
+    return A3.requests.createDomainToken(state.oauth3, state.session, opts).then(function (result) {
+      console.log(result);
+      var opts2 = {
+        token: result.token
+      , name: (opts.sub ? opts.sub + '.' : '') + opts.sld + '.' + opts.tld
+      , value: '127.0.0.1'
+      , device: 'brunchfast.local'
+      , type: 'A'
+      , ttl: 600
+      //, priority: 10
+      };
+      return A3.requests.setDomainRecord(state.oauth3, state.session, opts2).then(function (result) {
+        console.log(result);
+      });
+    });
+  });
+}
+
+function getMyDomains(ws, state) {
+  function loopit() {
+    getMyDomain(ws, state);
+  }
+
+  if (!state.purchasedDomains) {
+    getPurchasedDomains(ws, state, loopit);
+  }
+}
+
+function getDomain(ws, state) {
+  function loopit() {
+    getDomain(ws, state);
+  }
+
+  if (!state.checkoutReady) {
     addDomainsToCart(ws, state, loopit);
   }
   else if (!state.tipped) {
