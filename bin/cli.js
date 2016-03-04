@@ -1985,7 +1985,9 @@ cli.parse({
 
 // ignore certonly and extraneous arguments
 cli.main(function(_, options) {
-  main(options);
+  require('../lib/tld-hints').getTldsAsync().then(function () {
+    main(options);
+  });
 });
 
 process.on('unhandledRejection', function(reason, p) {
