@@ -1,6 +1,6 @@
 {
   "name": "oauth3-cli",
-  "version": "1.0.0-alpha.914",
+  "version": "1.0.0-alpha.915",
   "description": "Boldly taking OAuth2 where it has never gone before!",
   "main": "index.js",
   "directories": {
