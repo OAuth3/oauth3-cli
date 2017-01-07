@@ -1,2 +1,5 @@
-# oauth3-cli
-Boldly taking OAuth2 where it has never gone before!
+oauth3-cli
+=====
+
+Moved to https://git.daplie.com/OAuth3/oauth3-cli
+
